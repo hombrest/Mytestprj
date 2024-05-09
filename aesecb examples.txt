@@ -1,0 +1,108 @@
+aesecb examples
+Sure, here are some examples of AES ECB encryption in Java:
+
+Example 1: Encrypting and Decrypting a String using AES ECB
+
+```java
+import javax.crypto.Cipher;
+import javax.crypto.spec.SecretKeySpec;
+import java.nio.charset.StandardCharsets;
+import java.util.Base64;
+
+public class AESEncryptionExample {
+
+    public static void main(String[] args) throws Exception {
+        String plainText = "This is the message to be encrypted";
+        String key = "ThisIsASecretKey";
+
+        // Encrypt the plain text using AES ECB
+        byte[] encryptedBytes = encrypt(plainText, key);
+
+        // Decrypt the encrypted bytes using AES ECB
+        String decryptedText = decrypt(encryptedBytes, key);
+
+        System.out.println("Original Text: " + plainText);
+        System.out.println("Encrypted Text: " + Base64.getEncoder().encodeToString(encryptedBytes));
+        System.out.println("Decrypted Text: " + decryptedText);
+    }
+
+    public static byte[] encrypt(String plainText, String key) throws Exception {
+        SecretKeySpec secretKey = new SecretKeySpec(key.getBytes(StandardCharsets.UTF_8), "AES");
+        Cipher cipher = Cipher.getInstance("AES/ECB/PKCS5Padding");
+        cipher.init(Cipher.ENCRYPT_MODE, secretKey);
+        return cipher.doFinal(plainText.getBytes(StandardCharsets.UTF_8));
+    }
+
+    public static String decrypt(byte[] encryptedBytes, String key) throws Exception {
+        SecretKeySpec secretKey = new SecretKeySpec(key.getBytes(StandardCharsets.UTF_8), "AES");
+        Cipher cipher = Cipher.getInstance("AES/ECB/PKCS5Padding");
+        cipher.init(Cipher.DECRYPT_MODE, secretKey);
+        byte[] decryptedBytes = cipher.doFinal(encryptedBytes);
+        return new String(decryptedBytes, StandardCharsets.UTF_8);
+    }
+}
+```
+
+Example 2: Encrypting and Decrypting a File using AES ECB
+
+```java
+import javax.crypto.Cipher;
+import javax.crypto.CipherInputStream;
+import javax.crypto.CipherOutputStream;
+import javax.crypto.spec.SecretKeySpec;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.nio.charset.StandardCharsets;
+
+public class AESFileEncryptionExample {
+
+    public static void main(String[] args) throws Exception {
+        String inputFile = "input.txt";
+        String outputFile = "encrypted.txt";
+        String key = "ThisIsASecretKey";
+
+        // Encrypt the file using AES ECB
+        encryptFile(inputFile, outputFile, key);
+
+        // Decrypt the encrypted file using AES ECB
+        String decryptedFile = "decrypted.txt";
+        decryptFile(outputFile, decryptedFile, key);
+
+        System.out.println("File encryption and decryption completed successfully.");
+    }
+
+    public static void encryptFile(String inputFile, String outputFile, String key) throws Exception {
+        SecretKeySpec secretKey = new SecretKeySpec(key.getBytes(StandardCharsets.UTF_8), "AES");
+        Cipher cipher = Cipher.getInstance("AES/ECB/PKCS5Padding");
+        cipher.init(Cipher.ENCRYPT_MODE, secretKey);
+
+        try (FileInputStream inputStream = new FileInputStream(inputFile);
+             FileOutputStream outputStream = new FileOutputStream(outputFile);
+             CipherOutputStream cipherOutputStream = new CipherOutputStream(outputStream, cipher)) {
+            byte[] buffer = new byte[4096];
+            int bytesRead;
+            while ((bytesRead = inputStream.read(buffer)) != -1) {
+                cipherOutputStream.write(buffer, 0, bytesRead);
+            }
+        }
+    }
+
+    public static void decryptFile(String inputFile, String outputFile, String key) throws Exception {
+        SecretKeySpec secretKey = new SecretKeySpec(key.getBytes(StandardCharsets.UTF_8), "AES");
+        Cipher cipher = Cipher.getInstance("AES/ECB/PKCS5Padding");
+        cipher.init(Cipher.DECRYPT_MODE, secretKey);
+
+        try (FileInputStream inputStream = new FileInputStream(inputFile);
+             CipherInputStream cipherInputStream = new CipherInputStream(inputStream, cipher);
+             FileOutputStream outputStream = new FileOutputStream(outputFile)) {
+            byte[] buffer = new byte[4096];
+            int bytesRead;
+            while ((bytesRead = cipherInputStream.read(buffer)) != -1) {
+                outputStream.write(buffer, 0, bytesRead);
+            }
+        }
+    }
+}
+```
+
+Please note that AES ECB (Electronic Codebook) mode is not recommended for encryption because it does not provide sufficient security. It is better to use AES in other modes like CBC (Cipher Block Chaining) or GCM (Galois/Counter Mode) with a unique IV (Initialization Vector) for each encryption operation.
