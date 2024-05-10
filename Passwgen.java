@@ -47,31 +47,77 @@ In this example, the `encrypt` function takes a plaintext as input and returns t
 
 You can modify the `plaintext` variable in the `main` method to encrypt and decrypt different messages.
 
- import java.security.SecureRandom;
 
-public class Passwgen {
+To create a Base85 encoding function from scratch in Java, follow the steps below. Base85, also referred to as Ascii85, is a form of binary-to-text encoding that represents binary data in an ASCII format. It's more space-efficient than Base64. Note that this basic implementation focuses on the essence of Base85 encoding without delving into variants or encoding options that adjust the character set or handle padding differently.
 
-    private static final String UPPER = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
-    private static final String LOWER = "abcdefghijklmnopqrstuvwxyz";
-    private static final String DIGITS = "0123456789";
-    private static final String SPECIAL = "!@#$%^&*()_-+=";
+Here's a straightforward example of implementing Base85 encoding:
 
-    public static String generatePassword(int length) {
-        String characters = UPPER + LOWER + DIGITS + SPECIAL;
-        SecureRandom random = new SecureRandom();
-        StringBuilder password = new StringBuilder();
+```java
+public class Base85Encoder {
 
-        for (int i = 0; i < length; i++) {
-            int randomIndex = random.nextInt(characters.length());
-            password.append(characters.charAt(randomIndex));
+    // The Base85 alphabet
+    private static final String BASE85_CHARS = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz!#$%&()*+-;<=>?@^_`{|}~";
+    private static final int DIVISOR = 85;
+    private static final int BLOCK_SIZE = 4;
+    private static final int ENCODED_BLOCK_SIZE = 5;
+
+    // Method to encode from bytes to a Base85 string
+    public static String encode(byte[] data) {
+        StringBuilder encoded = new StringBuilder();
+        for (int i = 0; i < data.length; i += BLOCK_SIZE) {
+            // Creating a long to handle the conversion (4 bytes => 1 long)
+            long value = 0L;
+            // This flag checks if the current block is the last one & might need padding
+            boolean isLastBlock = i + BLOCK_SIZE >= data.length;
+            int padding = 0;
+
+            for (int j = 0; j < BLOCK_SIZE; j++) {
+                value <<= 8;
+                if (i + j < data.length) {
+                    value |= (data[i + j] & 0xFF);
+                } else {
+                    padding++;
+                }
+            }
+
+            // Encoding the block
+            char[] encodedBlock = new char[ENCODED_BLOCK_SIZE];
+            for (int j = ENCODED_BLOCK_SIZE - 1; j >= 0; j--) {
+                encodedBlock[j] = BASE85_CHARS.charAt((int)(value % DIVISOR));
+                value /= DIVISOR;
+            }
+
+            // Adding the encoded block to the result, adjusting for any necessary padding
+            if (isLastBlock && padding > 0) {
+                // Adjusting for padding - only add necessary chars
+                for (int j = 0; j < encodedBlock.length - padding; j++) {
+                    encoded.append(encodedBlock[j]);
+                }
+            } else {
+                for (char c : encodedBlock) {
+                    encoded.append(c);
+                }
+            }
         }
-
-        return password.toString();
-    }
-
-    public static void main(String[] args) {
-        int passwordLength = 10;
-        String generatedPassword = generatePassword(passwordLength);
-        System.out.println("Generated Password: " + generatedPassword);
+        return encoded.toString();
     }
 }
+```
+
+### How to Use
+You would use it like this:
+```java
+public class Main {
+    public static void main(String[] args) {
+        String testString = "Hello World!";
+        byte[] bytes = testString.getBytes();
+        String encoded = Base85Encoder.encode(bytes);
+        System.out.println("Encoded text: " + encoded);
+    }
+}
+```
+
+### Notes
+1. **Error Handling**: This example lacks detailed error handling and input validation, which should be added for robustness.
+2. **Padding and Length**: The example simplifies handling the final block and its padding. Depending on how strict you need to adhere to a specific variant of Base85 encoding (such as Adobe's or ZeroMQ's versions), you might need to adjust padding handling.
+3. **Performance**: If performance is critical, consider optimizing the conversion and encoding logic, especially if dealing with large data volumes.
