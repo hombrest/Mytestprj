@@ -1,4 +1,4 @@
-Certainly! To use `xdelta` for delta compression in Python, you can use the `xdelta3` library. Here's a basic example demonstrating how to create and apply a delta:
+noCertainly! To use `xdelta` for delta compression in Python, you can use the `xdelta3` library. Here's a basic example demonstrating how to create and apply a delta:
 
 ### Prerequisites
 First, ensure that you have `xdelta3` installed. You can install it using:
@@ -63,4 +63,29 @@ print("New version reconstructed successfully!")
   - The reconstructed data is then saved to a new file (`reconstructed.txt`).
 
 This is a simple example. In practice, you might need to handle larger files and more complex data, but the basic principles remain the same.
+
+##################
+
+To restrict a SVN user to have access to only the head revision, you can use path-based authorization in SVN. Here's a general guide on how you can achieve this:
+
+1. **Set Up Path-Based Authorization**: In your SVN server configuration file (typically located in the repository's conf directory), you can configure path-based authorization rules. Look for the `authz-db` setting in the `[general]` section of the configuration file.
+
+2. **Define Repository Paths**: Under the `[groups]` section, define a group (e.g., `limited_access`) and specify the user(s) who should have limited access in that group.
+
+3. **Restrict Access to Head Revision**: In the `[limited_access:/]` section (assuming your repository is named `limited_access`), you can set specific access controls. To restrict access to only the head revision, you can use the `@HEAD` syntax in your rule.
+
+For example, you can use the following rule to restrict the user to have read-only access to only the head revision:
+
+```
+[limited_access:/]
+@limited_access = r
+```
+
+This rule allows users in the `limited_access` group read-only access to the head revision of the repository. Adjust the access level (`r` for read, `w` for write) as needed.
+
+4. **Other Access Levels**: If you need to provide more granular access control, you can specify paths within the repository and define access permissions accordingly. You can use `@HEAD` to restrict access to the head revision on specific paths within the repository.
+
+5. **Reload SVN Configuration**: After making these changes, don't forget to reload the SVN server configuration for the changes to take effect.
+
+Please ensure you have a backup of your repository before making any changes to the configuration file. It's also essential to test these changes in a staging environment before applying them to a production server. If you are not familiar with SVN server configuration, consider seeking assistance from someone experienced with SVN administration.
 
