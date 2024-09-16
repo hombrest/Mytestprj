@@ -89,3 +89,39 @@ This rule allows users in the `limited_access` group read-only access to the hea
 
 Please ensure you have a backup of your repository before making any changes to the configuration file. It's also essential to test these changes in a staging environment before applying them to a production server. If you are not familiar with SVN server configuration, consider seeking assistance from someone experienced with SVN administration.
 
+Mathematical theories underpinning premium pricing include several concepts from economics, statistics, and pricing models. Here are the key theories:
+
+1. **Price Elasticity of Demand**: This measures how a change in price affects the quantity demanded. It's calculated as:
+   \[
+   E_d = \frac{\%\ \text{change in quantity demanded}}{\%\ \text{change in price}}
+   \]
+   A product with low elasticity can sustain higher prices without significantly affecting demand, justifying premium pricing.
+
+2. **Consumer Surplus**: This concept refers to the difference between what consumers are willing to pay and what they actually pay. Determined by the demand curve, if a product is priced higher but perceived as valuable, the consumer surplus can remain high, supporting premium pricing.
+
+3. **Markup Pricing**: This involves setting prices based on a percentage of costs. The formula is:
+   \[
+   P = C + (C \times M)
+   \]
+   where \(P\) is the price, \(C\) is the cost, and \(M\) is the markup percentage. Premium products often have a high markup based on perceived value rather than just production costs.
+
+4. **Game Theory**: In competitive markets, game theory models help understand pricing strategies. Companies may set premium prices as a response to competitor pricing, anticipating consumer behavior and reactions to those price points.
+
+5. **The Van Westendorp Price Sensitivity Meter**: This statistical approach evaluates acceptable prices through consumer surveys. It identifies optimal price ranges based on perceived value and willingness to pay, enabling firms to set premium prices strategically.
+
+6. **Gabor-Granger Technique**: This pricing model captures consumer willingness to pay through assessment of different price points. It helps identify ceiling prices that consumers would consider acceptable, informing premium pricing strategies.
+
+7. **Conjoint Analysis**: This statistical technique assesses how consumers value different attributes of a product. By simulating market scenarios, businesses can determine optimal price points for premium offerings based on feature preferences.
+
+8. **Price Optimization Models**: These are mathematical models that utilize historical sales data and market conditions to determine optimal price levels. Techniques like regression analysis or machine learning algorithms help predict revenue outcomes under various pricing strategies.
+
+9. **Cost-Plus Pricing**: A straightforward mathematical approach where companies calculate total costs and add a fixed percentage as profit. While often simplistic, it can form the basis for pricing premium products when accompanied by a strong value proposition.
+
+10. **Profit Maximization**: Companies aim to find the price point at which marginal cost equals marginal revenue. This can be expressed mathematically as:
+    \[
+    MC = MR
+    \]
+   With premium pricing, businesses strive to position themselves at the intersection of consumer demand and their costs.
+
+These mathematical theories blend to form a robust framework that supports strategic decision-making in premium pricing.
+
