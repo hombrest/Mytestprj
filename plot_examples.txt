@@ -1,0 +1,179 @@
+outstanding principals 
+Let r=3.375/12, n=240, P=6000000, plot f(x)=(1 - ((1+r)^x-1)/((1+r)^n-1))*P
+
+# Define the parameters
+r = 3.375 / 12 / 100  # Monthly interest rate as a decimal
+n = 240  # Total number of periods
+P = 6000000  # Principal amount
+
+# Define the function f(x)
+def f(x):
+    return (1 - ((1 + r)**x - 1) / ((1 + r)**n - 1)) * P
+
+# Generate x values
+x_values = np.linspace(0, n, 500)  # From 0 to n (inclusive)
+
+# Compute f(x)
+f_values = f(x_values)
+
+# Plot the function
+plt.figure(figsize=(10, 6))
+plt.plot(x_values, f_values, label=r"$f(x) = \left(1 - \frac{(1+r)^x - 1}{(1+r)^n - 1}\right) \cdot P$", color='green')
+plt.axhline(0, color='black', linewidth=0.8, linestyle="--")
+plt.axvline(0, color='black', linewidth=0.8, linestyle="--")
+plt.title("Graph of $f(x)$ with $r=3.375/12$, $n=240$, $P=6000000$")
+plt.xlabel("x (Number of Periods)")
+plt.ylabel("f(x)")
+plt.grid(alpha=0.4)
+plt.legend()
+plt.show()
+
+Here’s the Ruby code to plot the given function :
+
+require 'rinruby'
+
+# Parameters
+r = 3.375 / 12 / 100 # Monthly interest rate as a decimal
+n = 240              # Total number of periods
+p = 6000000          # Principal amount
+
+# Create x values
+x_values = (0..n).step(0.5).to_a # Generating values from 0 to n
+
+# Define the function
+f_values = x_values.map do |x|
+  (1 - ((1 + r)**x - 1) / ((1 + r)**n - 1)) * p
+end
+
+# Use R for plotting
+R = RinRuby.new(echo: false)
+
+# Pass data to R
+R.x = x_values
+R.f = f_values
+
+# Plot in R
+R.eval <<-EOF
+  plot(x, f, type = "l", col = "green", lwd = 2, xlab = "x (Number of Periods)", 
+       ylab = "f(x)", main = "Graph of f(x) with r=3.375/12, n=240, P=6000000")
+  abline(h = 0, col = "black", lty = 2)
+  abline(v = 0, col = "black", lty = 2)
+EOF
+
+R.quit
+
+Instructions to Run:
+
+1. Install Ruby and the rinruby gem by running:
+
+gem install rinruby
+
+
+2. Make sure R is installed on your system.
+
+
+3. Save the code to a .rb file and execute it.
+
+
+4. The graph will be generated and displayed using R.
+
+To plot the function  using Rust, you'll need to use a plotting library like plotters. Below is a Rust implementation:
+
+Code
+
+use plotters::prelude::*;
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Parameters
+    let r = 3.375 / 12.0 / 100.0; // Monthly interest rate as a decimal
+    let n = 240.0; // Total number of periods
+    let p = 6000000.0; // Principal amount
+
+    // Define the function f(x)
+    let f = |x: f64| -> f64 {
+        (1.0 - ((1.0 + r).powf(x) - 1.0) / ((1.0 + r).powf(n) - 1.0)) * p
+    };
+
+    // Generate x values and corresponding f(x) values
+    let x_values: Vec<f64> = (0..=2400).map(|i| i as f64 / 10.0).collect(); // From 0 to 240 with 0.1 step
+    let f_values: Vec<f64> = x_values.iter().map(|&x| f(x)).collect();
+
+    // Set up the drawing area
+    let root_area = BitMapBackend::new("output.png", (800, 600)).into_drawing_area();
+    root_area.fill(&WHITE)?;
+
+    let mut chart = ChartBuilder::on(&root_area)
+        .caption("Graph of f(x)", ("sans-serif", 20))
+        .margin(20)
+        .x_label_area_size(30)
+        .y_label_area_size(40)
+        .build_cartesian_2d(0.0..240.0, 0.0..p)?;
+
+    chart.configure_mesh().draw()?;
+
+    // Draw the function
+    chart
+        .draw_series(LineSeries::new(
+            x_values.into_iter().zip(f_values.into_iter()),
+            &GREEN,
+        ))?
+        .label("f(x) = (1 - ((1+r)^x - 1)/((1+r)^n - 1)) * P")
+        .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 10, y)], &GREEN));
+
+    // Configure the legend
+    chart.configure_series_labels().background_style(&WHITE.mix(0.8)).draw()?;
+
+    Ok(())
+}
+
+
+---
+
+Instructions
+
+1. Setup Rust Environment:
+
+Install Rust if you haven’t already: Rust Installation.
+
+Create a new Rust project:
+
+cargo new plot_function
+cd plot_function
+
+
+
+2. Add Dependencies: Add the following to your Cargo.toml file:
+
+[dependencies]
+plotters = "0.3"
+plotters-backend = "0.3"
+
+
+3. Run the Code:
+
+Save the above code in src/main.rs.
+
+Build and run the project:
+
+cargo run
+
+
+
+4. View Output:
+
+The plot will be saved as output.png in the project directory.
+
+Open the file to view the graph.
+
+
+
+
+
+---
+
+This Rust code uses the plotters library to generate and save the graph as an image. Let me know if you have any questions!
+
+
+
+
+
