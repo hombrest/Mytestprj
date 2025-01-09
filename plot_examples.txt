@@ -173,7 +173,8 @@ Open the file to view the graph.
 
 This Rust code uses the plotters library to generate and save the graph as an image. Let me know if you have any questions!
 
-
+python example for deep learning 
+https://github.com/pascal-canuel/GestureAI/blob/dac0499ab49c1b31f4b422677221d8b960cf3909/GestureAI%2FGestureAI.py
 
 
 
