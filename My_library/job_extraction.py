@@ -2,6 +2,10 @@ import requests
 from bs4 import BeautifulSoup
 import pandas as pd
 import time
+import re
+
+from tabulate import tabulate
+
 
 def extract_job_detail(url, with_header=False):
     try:
@@ -25,7 +29,7 @@ def extract_job_detail(url, with_header=False):
                     if len(columns) == 2:  # Two columns: field name and data
                         field_name = columns[0].text.strip()
                         field_data = columns[1].text.strip()
-                        if field_name:
+                        if field_name and field_name not in ['Monthly Salary Range HK$', 'Payroll', 'Apply To', 'Direct Line', 'Employer Business']:
                             # fields[field_name] = field_data
                             if with_header:
                                 header.append(field_name)
@@ -45,6 +49,34 @@ def extract_job_detail(url, with_header=False):
 
     except Exception as e:
         print(f"Error: {e}")
+
+
+def extract_title(text):
+    keyword_index = text.find('(')
+
+    if keyword_index != -1:
+        extracted_string = text[:keyword_index].strip()
+
+        if extracted_string:
+            abbreviation = ''.join(word[0] for word in extracted_string.split())
+            return abbreviation
+        else:
+            return None
+    else:
+        return None
+
+def extract_bd(text):
+    try:
+        keyword_index_1 = text.index('serve the')
+    except ValueError:
+        return None
+
+    match = re.search(r'(\n|\r)', text)
+    if match:
+        keyword_index_2 = match.start()
+        return text[keyword_index_1 + len('serve the '): keyword_index_2].strip().replace(';', '')
+
+    return None
 
 url = "https://infotech.com.hk/itjs/job/fe-search.do?method=feList&sortByField=jjm_activedate&sortByOrder=DESC"
 
@@ -84,7 +116,14 @@ try:
         end = time.time()
         print(f"Total extraction time: {round(end - start, 2)} seconds.")
 
-        df = pd.DataFrame(rows)
+        df = pd.DataFrame(rows[1:], columns=rows[0])
+
+        if 'Duties' in df.columns:
+            df['B/D'] = df['Duties'].apply(extract_bd)
+            df['Title'] = df['Job Title/ Category'].apply(extract_title)
+
+        print(tabulate(df[['B/D', 'Title', 'Duties']].head(2), headers='keys', tablefmt='pretty', showindex=False,
+                       stralign='left'))
 
         df.to_excel("job_detail.xlsx", index=False)
 
