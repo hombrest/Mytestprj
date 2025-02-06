@@ -34,9 +34,9 @@ def extract_job_detail(job_url):
                                 data[field_name] = field_data
                                 
                                 if field_name == 'Duties':
-                                	data['B/D'] = extract_bd(field_data)
+                                    data['B/D'] = extract_bd(field_data)
                                 if  field_name == 'Job Title/ Category' :
-                                	data['Title'] = extract_title(field_data)                                                        
+                                    data['Title'] = extract_title(field_data)
                 # Print the extracted data
                 # for field_name, field_data in fields.items():
                 #     print(f"{field_name}: {field_data}")
@@ -116,12 +116,12 @@ try:
         end = time.time()
         print(f"Total extraction time: {round(end - start, 2)} seconds.")
         if rows:
-        	new_rows = pd.DataFrame(rows)
-        	df = pd.concat([df, new_rows], ignore_index=True)
-        	with pd.ExcelWriter(file_path, mode='a', engine='openpyxl', if_sheet_exists='replace') as writer:
-        		df.to_excel(writer, sheet_name=sheet_name, index=Flase)
+            new_rows = pd.DataFrame(rows)
+            df = pd.concat([df, new_rows], ignore_index=True)
+            with pd.ExcelWriter(file_path, mode='a', engine='openpyxl', if_sheet_exists='replace') as writer:
+                df.to_excel(writer, sheet_name=sheet_name, index=False)
         else:
-        	print('no record found')
+            print('No new job found')
 
     else:
         print(f"Failed to fetch page. Status code: {response.status_code}")
