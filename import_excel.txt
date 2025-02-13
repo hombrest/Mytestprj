@@ -1,0 +1,124 @@
+I'll help you create a Spring Boot application to import data from an Excel file to MySQL. Here's a complete example:
+
+First, add these dependencies to your pom.xml:
+
+
+        org.springframework.boot
+        spring-boot-starter-data-jpa
+
+        org.springframework.boot
+        spring-boot-starter-web
+
+        mysql
+        mysql-connector-java
+        runtime
+
+        org.apache.poi
+        poi-ooxml
+        5.2.2
+
+        org.projectlombok
+        lombok
+        true
+
+
+
+Configure MySQL database in application.properties:
+
+spring.datasource.url=jdbc:mysql://localhost:3306/your_database
+spring.datasource.username=your_username
+spring.datasource.password=your_password
+spring.jpa.hibernate.ddl-auto=update
+spring.jpa.show-sql=true
+
+Create an Entity class (example for Employee):
+
+@Entity
+@Table(name = "employees")
+@Data
+public class Employee {
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+
+    private String name;
+    private String email;
+    private String department;
+    private Double salary;
+}
+
+Create a Repository:
+
+@Repository
+public interface EmployeeRepository extends JpaRepository {
+}
+
+Create a Service to handle Excel file processing:
+
+@Service
+public class ExcelService {
+
+    @Autowired
+    private EmployeeRepository employeeRepository;
+
+    public void importExcelFile(MultipartFile file) throws IOException {
+        List employees = new ArrayList();
+
+        try (Workbook workbook = new XSSFWorkbook(file.getInputStream())) {
+            Sheet sheet = workbook.getSheetAt(0);
+
+            // Skip header row
+            Iterator rows = sheet.iterator();
+            rows.next();
+
+            while (rows.hasNext()) {
+                Row currentRow = rows.next();
+
+                Employee employee = new Employee();
+
+                employee.setName(getCellValue(currentRow.getCell(0)));
+                employee.setEmail(getCellValue(currentRow.getCell(1)));
+                employee.setDepartment(getCellValue(currentRow.getCell(2)));
+                employee.setSalary(Double.parseDouble(getCellValue(currentRow.getCell(3))));
+
+                employees.add(employee);
+            }
+        }
+
+        employeeRepository.saveAll(employees);
+    }
+
+    private String getCellValue(Cell cell) {
+        if (cell == null) {
+            return null;
+        }
+        switch (cell.getCellType()) {
+            case STRING:
+                return cell.getStringCellValue();
+            case NUMERIC:
+                return String.valueOf(cell.getNumericCellValue());
+            case BOOLEAN:
+                return String.valueOf(cell.getBooleanCellValue());
+            default:
+                return "";
+        }
+    }
+}
+
+Create a Controller:
+
+`java
+@RestController
+@RequestMapping("/api")
+public class ExcelController {
+
+    @Autowired
+    private ExcelService excelService;
+
+    @PostMapping("/upload")
+    public ResponseEntity uploadFile(@RequestParam("file") MultipartFile file) {
+        try {
+            excelService.importExcelFile(file);
+            return ResponseEntity.ok("Data imported successfully!");
+        } catch (IOException e) {
+            return Response entity 
