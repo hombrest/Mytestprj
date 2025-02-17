@@ -1,0 +1,228 @@
+Here's a comprehensive Spring Boot AOP example that demonstrates different types of AOP advice:
+
+1. First, create a new Spring Boot project with these dependencies:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    
+    <parent>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-parent</artifactId>
+        <version>2.7.0</version>
+    </parent>
+    
+    <groupId>com.example</groupId>
+    <artifactId>spring-aop-demo</artifactId>
+    <version>1.0.0</version>
+    
+    <dependencies>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-web</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-aop</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+            <optional>true</optional>
+        </dependency>
+    </dependencies>
+</project>
+```
+
+2. Create a custom annotation for logging:
+
+```java
+package com.example.aspect;
+
+import java.lang.annotation.ElementType;
+import java.lang.annotation.Retention;
+import java.lang.annotation.RetentionPolicy;
+import java.lang.annotation.Target;
+
+@Target(ElementType.METHOD)
+@Retention(RetentionPolicy.RUNTIME)
+public @interface LogExecutionTime {
+}
+```
+
+3. Create the aspect class:
+
+```java
+package com.example.aspect;
+
+import lombok.extern.slf4j.Slf4j;
+import org.aspectj.lang.JoinPoint;
+import org.aspectj.lang.ProceedingJoinPoint;
+import org.aspectj.lang.annotation.*;
+import org.springframework.stereotype.Component;
+
+@Aspect
+@Component
+@Slf4j
+public class LoggingAspect {
+
+    @Before("execution(* com.example.service.*.*(..))")
+    public void logBefore(JoinPoint joinPoint) {
+        log.info("Before executing method: {}", joinPoint.getSignature().getName());
+    }
+
+    @After("execution(* com.example.service.*.*(..))")
+    public void logAfter(JoinPoint joinPoint) {
+        log.info("After executing method: {}", joinPoint.getSignature().getName());
+    }
+
+    @AfterReturning(pointcut = "execution(* com.example.service.*.*(..))", returning = "result")
+    public void logAfterReturning(JoinPoint joinPoint, Object result) {
+        log.info("Method {} returned: {}", joinPoint.getSignature().getName(), result);
+    }
+
+    @AfterThrowing(pointcut = "execution(* com.example.service.*.*(..))", throwing = "error")
+    public void logAfterThrowing(JoinPoint joinPoint, Throwable error) {
+        log.error("Method {} threw exception: {}", joinPoint.getSignature().getName(), error.getMessage());
+    }
+
+    @Around("@annotation(LogExecutionTime)")
+    public Object logExecutionTime(ProceedingJoinPoint joinPoint) throws Throwable {
+        long startTime = System.currentTimeMillis();
+        Object result = joinPoint.proceed();
+        long endTime = System.currentTimeMillis();
+        log.info("Method {} executed in {} ms", joinPoint.getSignature().getName(), (endTime - startTime));
+        return result;
+    }
+}
+```
+
+4. Create a service class:
+
+```java
+package com.example.service;
+
+import com.example.aspect.LogExecutionTime;
+import org.springframework.stereotype.Service;
+
+@Service
+public class UserService {
+
+    @LogExecutionTime
+    public String getUser(String userId) {
+        // Simulate some processing
+        try {
+            Thread.sleep(1000);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+        return "User: " + userId;
+    }
+
+    public void createUser(String userName) {
+        // Simulate user creation
+        if (userName == null) {
+            throw new IllegalArgumentException("Username cannot be null");
+        }
+        // Process user creation
+    }
+}
+```
+
+5. Create a controller:
+
+```java
+package com.example.controller;
+
+import com.example.service.UserService;
+import org.springframework.web.bind.annotation.*;
+
+@RestController
+@RequestMapping("/api/users")
+public class UserController {
+
+    private final UserService userService;
+
+    public UserController(UserService userService) {
+        this.userService = userService;
+    }
+
+    @GetMapping("/{userId}")
+    public String getUser(@PathVariable String userId) {
+        return userService.getUser(userId);
+    }
+
+    @PostMapping
+    public void createUser(@RequestParam String userName) {
+        userService.createUser(userName);
+    }
+}
+```
+
+6. Create the main application class:
+
+```java
+package com.example;
+
+import org.springframework.boot.SpringApplication;
+import org.springframework.boot.autoconfigure.SpringBootApplication;
+
+@SpringBootApplication
+public class AopDemoApplication {
+    public static void main(String[] args) {
+        SpringApplication.run(AopDemoApplication.class, args);
+    }
+}
+```
+
+7. Add logging configuration (application.properties):
+
+```properties
+logging.level.com.example=DEBUG
+```
+
+This example demonstrates different types of AOP advice:
+
+- @Before: Executes before the method
+- @After: Executes after the method (regardless of outcome)
+- @AfterReturning: Executes after successful method execution
+- @AfterThrowing: Executes when method throws an exception
+- @Around: Wraps around method execution with custom behavior
+
+You can test the application using these curl commands:
+
+```bash
+# Get user (demonstrates @Around and other aspects)
+curl http://localhost:8080/api/users/123
+
+# Create user successfully
+curl -X POST "http://localhost:8080/api/users?userName=john"
+
+# Create user with error (demonstrates @AfterThrowing)
+curl -X POST "http://localhost:8080/api/users?userName="
+```
+
+The aspects will log:
+- Method entry and exit
+- Execution time for methods with @LogExecutionTime
+- Return values
+- Exceptions when they occur
+
+This example shows:
+1. Custom annotation for AOP
+2. Different types of advice
+3. Pointcut expressions
+4. Exception handling
+5. Method execution timing
+6. Integration with Spring Boot
+7. Practical logging implementation
+
+You can extend this example by:
+- Adding more complex pointcut expressions
+- Creating custom annotations for different aspects
+- Adding security aspects
+- Implementing caching aspects
+- Adding validation aspects
