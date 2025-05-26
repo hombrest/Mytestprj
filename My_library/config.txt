@@ -1,0 +1,10 @@
+Sample config file
+Flow_Begin
+Log	Run the sample workflow repeatedly
+Call	Sheet1	CommandButton1_Click
+Wait	5
+Call	INC_TEST	CommandButton1_Click
+Wait	3
+Update	INC_TEST	A	3	1000
+Flow_End
+Lines to be ignored
