@@ -1,0 +1,638 @@
+# Project Name
+PROJECT_NAME="react-mysql-example"
+
+# Database Name (for .env)
+DB_NAME="todo_db"
+
+# Server Port (for .env)
+SERVER_PORT=5000
+
+# Function to create a directory
+create_directory() {
+  local dir_path="$1"
+  echo "Creating directory: $dir_path"
+  mkdir -p "$dir_path"
+}
+
+# Function to create a file and write content
+create_file() {
+  local file_path="$1"
+  local file_content="$2"
+  echo "Creating file: $file_path"
+  echo "$file_content" > "$file_path"
+}
+
+# --- Directory Structure ---
+
+# Root Directory
+create_directory "$PROJECT_NAME"
+cd "$PROJECT_NAME"
+
+# Client Directory
+create_directory "client"
+cd client
+create_directory "public"
+create_directory "src"
+cd src
+create_directory "components"
+cd ..
+cd ..
+cd ..
+
+# Server Directory
+create_directory "server"
+cd server
+create_directory "models"
+create_directory "routes"
+create_directory "config"
+cd ..
+
+# --- Root package.json ---
+cat <<EOF > package.json
+{
+  "name": "$PROJECT_NAME",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "start": "concurrently \"cd server && npm start\" \"cd client && npm start\"",
+    "dev": "concurrently \"cd server && npm run dev\" \"cd client && npm start\"",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "concurrently": "^8.0.1"
+  }
+}
+EOF
+
+# --- .gitignore (Root) ---
+cat <<EOF > .gitignore
+node_modules/
+.env
+EOF
+
+# --- Client Files ---
+cd "$PROJECT_NAME/client"
+cat <<EOF > package.json
+{
+  "name": "client",
+  "version": "0.1.0",
+  "private": true,
+  "dependencies": {
+    "axios": "^1.6.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-scripts": "5.0.1",
+    "web-vitals": "^2.1.4"
+  },
+  "scripts": {
+    "start": "react-scripts start",
+    "build": "react-scripts build",
+    "test": "react-scripts test",
+    "eject": "react-scripts eject"
+  },
+  "eslintConfig": {
+    "extends": [
+      "react-app",
+      "react-app/jest"
+    ]
+  },
+  "browserslist": {
+    "production": [
+      ">0.2%",
+      "not dead",
+      "not op_mini all"
+    ],
+    "development": [
+      "last 1 chrome version",
+      "last 1 firefox version",
+      "last 1 safari version"
+    ]
+  }
+}
+EOF
+
+# Create the minimal index.html
+cat <<EOF > public/index.html
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <link rel="icon" href="%PUBLIC_URL%/favicon.ico" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#000000" />
+    <meta
+      name="description"
+      content="React App"
+    />
+    <title>React To-Do List</title>
+  </head>
+  <body>
+    <noscript>You need to enable JavaScript to run this app.</noscript>
+    <div id="root"></div>
+  </body>
+</html>
+EOF
+
+# Create App.css
+create_file "src/App.css" '
+/* src/App.css */
+.app-container {
+    max-width: 600px;
+    margin: 20px auto;
+    padding: 20px;
+    border: 1px solid #ccc;
+    border-radius: 8px;
+}
+
+h1 {
+    text-align: center;
+}
+
+.task-form {
+    margin-bottom: 20px;
+    display: flex;
+    gap: 10px;
+}
+
+.task-form input[type="text"] {
+    flex-grow: 1;
+    padding: 8px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+}
+
+.task-form button {
+    padding: 8px 12px;
+    background-color: #4CAF50;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+.task-list {
+    list-style: none;
+    padding: 0;
+}
+
+.task-item {
+    display: flex;
+    align-items: center;
+    padding: 10px;
+    border-bottom: 1px solid #eee;
+}
+
+.task-item input[type="checkbox"] {
+    margin-right: 10px;
+}
+
+.task-item button {
+    margin-left: auto;
+    padding: 5px 10px;
+    background-color: #f44336;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+}
+'
+
+# Create App.jsx
+cat <<EOF > src/App.jsx
+import React, { useState, useEffect } from 'react';
+import TaskList from './components/TaskList';
+import TaskForm from './components/TaskForm';
+import './App.css'; // Import your CSS file
+
+function App() {
+    const [tasks, setTasks] = useState([]);
+
+    useEffect(() => {
+        // Fetch tasks from the backend when the component mounts
+        const fetchTasks = async () => {
+            try {
+                const response = await fetch('http://localhost:5000/api/tasks'); // Adjust the URL to your backend
+                if (!response.ok) {
+                    throw new Error('Failed to fetch tasks');
+                }
+                const data = await response.json();
+                setTasks(data);
+            } catch (error) {
+                console.error('Error fetching tasks:', error);
+                // Handle error (e.g., show an error message)
+            }
+        };
+
+        fetchTasks();
+    }, []); // Empty dependency array ensures this runs only once on mount
+
+    const handleAddTask = (newTask) => {
+        setTasks([...tasks, newTask]); // Add the new task to the state
+    };
+
+    const handleUpdateTask = (id, updatedTask) => {
+        setTasks(tasks.map(task => (task.id === id ? updatedTask : task)));
+    };
+
+    const handleDeleteTask = (id) => {
+        setTasks(tasks.filter(task => task.id !== id));
+    };
+
+    return (
+        <div className="app-container">
+            <h1>To-Do List</h1>
+            <TaskForm onAddTask={handleAddTask} />
+            <TaskList tasks={tasks} onUpdate={handleUpdateTask} onDelete={handleDeleteTask} />
+        </div>
+    );
+}
+
+export default App;
+EOF
+
+# Create index.jsx
+cat <<EOF > src/index.jsx
+import React from 'react';
+import ReactDOM from 'react-dom/client';
+import App from './App';
+
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(
+  <React.StrictMode>
+    <App />
+  </React.StrictMode>
+);
+EOF
+
+# Create TaskForm.jsx
+cat <<EOF > src/components/TaskForm.jsx
+import React, { useState } from 'react';
+
+const TaskForm = ({ onAddTask }) => {
+    const [title, setTitle] = useState('');
+    const [description, setDescription] = useState('');
+
+    const handleSubmit = async (e) => {
+        e.preventDefault();
+
+        if (!title.trim()) {
+            alert('Title is required.'); // Basic validation
+            return;
+        }
+
+        const newTask = {
+            title,
+            description,
+            completed: false,
+        };
+
+        try {
+            const response = await fetch('http://localhost:5000/api/tasks', { // Adjust the URL to your backend
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(newTask),
+            });
+
+            if (response.ok) {
+                const createdTask = await response.json();
+                onAddTask(createdTask); // Add the new task to the list in App.jsx
+                setTitle(''); // Clear the input fields
+                setDescription('');
+            } else {
+                console.error('Failed to create task');
+                // Handle error (e.g., show an error message)
+            }
+        } catch (error) {
+            console.error('Error creating task:', error);
+            // Handle error
+        }
+    };
+
+    return (
+        <form onSubmit={handleSubmit} className="task-form">
+            <input
+                type="text"
+                placeholder="Title"
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+            />
+            <input
+                type="text"
+                placeholder="Description"
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+            />
+            <button type="submit">Add Task</button>
+        </form>
+    );
+};
+
+export default TaskForm;
+EOF
+
+# Create TaskList.jsx
+cat <<EOF > src/components/TaskList.jsx
+import React from 'react';
+import TaskItem from './TaskItem';
+
+const TaskList = ({ tasks, onUpdate, onDelete }) => {
+    return (
+        <div className="task-list">
+            {tasks.map((task) => (
+                <TaskItem
+                    key={task.id}
+                    task={task}
+                    onUpdate={onUpdate}
+                    onDelete={onDelete}
+                />
+            ))}
+        </div>
+    );
+};
+
+export default TaskList;
+EOF
+
+# Create TaskItem.jsx
+cat <<EOF > src/components/TaskItem.jsx
+import React from 'react';
+
+const TaskItem = ({ task, onUpdate, onDelete }) => {
+    const handleCheckboxChange = async (e) => {
+        const isCompleted = e.target.checked;
+        try {
+            await fetch(\`http://localhost:5000/api/tasks/\${task.id}\`, { // Adjust the URL to your backend
+                method: 'PUT',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ ...task, completed: isCompleted }),
+            });
+            onUpdate(task.id, { ...task, completed: isCompleted }); // Update the task in the local state
+        } catch (error) {
+            console.error('Error updating task:', error);
+            // Handle error (e.g., show an error message)
+        }
+    };
+
+    const handleDeleteClick = async () => {
+        try {
+            await fetch(\`http://localhost:5000/api/tasks/\${task.id}\`, { // Adjust the URL to your backend
+                method: 'DELETE',
+            });
+            onDelete(task.id); // Remove the task from the local state
+        } catch (error) {
+            console.error('Error deleting task:', error);
+            // Handle error
+        }
+    };
+
+    return (
+        <div className="task-item">
+            <input
+                type="checkbox"
+                checked={task.completed}
+                onChange={handleCheckboxChange}
+            />
+            <span>{task.title}</span>
+            <button onClick={handleDeleteClick}>Delete</button>
+        </div>
+    );
+};
+
+export default TaskItem;
+EOF
+cd ..
+
+# --- Server Files ---
+cd "$PROJECT_NAME/server"
+cat <<EOF > package.json
+{
+  "name": "server",
+  "version": "1.0.0",
+  "description": "",
+  "main": "app.js",
+  "scripts": {
+    "start": "node app.js",
+    "dev": "nodemon app.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "body-parser": "^1.20.2",
+    "cors": "^2.8.5",
+    "dotenv": "^16.3.1",
+    "express": "^4.18.2",
+    "mysql2": "^3.6.5"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.2"
+  }
+}
+EOF
+
+# Create .env
+cat <<EOF > .env
+DB_HOST=localhost
+DB_USER=your_mysql_user
+DB_PASSWORD=your_mysql_password
+DB_NAME=$DB_NAME
+PORT=$SERVER_PORT
+EOF
+
+# Create config/db.js
+cat <<EOF > config/db.js
+const mysql = require('mysql2');
+require('dotenv').config(); // Load environment variables
+
+const db = mysql.createConnection({
+    host: process.env.DB_HOST,
+    user: process.env.DB_USER,
+    password: process.env.DB_PASSWORD,
+    database: process.env.DB_NAME,
+});
+
+db.connect((err) => {
+    if (err) {
+        console.error('Database connection error:', err);
+    } else {
+        console.log('Connected to MySQL database!');
+    }
+});
+
+module.exports = db;
+EOF
+
+# Create models/task.js
+cat <<EOF > models/task.js
+const db = require('../config/db');
+
+const Task = {
+    getAllTasks: (callback) => {
+        db.query('SELECT * FROM tasks', (err, results) => {
+            if (err) {
+                console.error('Error fetching tasks:', err);
+                return callback(err, null);
+            }
+            callback(null, results);
+        });
+    },
+    getTaskById: (id, callback) => {
+        db.query('SELECT * FROM tasks WHERE id = ?', [id], (err, results) => {
+            if (err) {
+                console.error('Error fetching task by ID:', err);
+                return callback(err, null);
+            }
+            callback(null, results[0]); // Assuming ID is unique
+        });
+    },
+    createTask: (task, callback) => {
+        db.query('INSERT INTO tasks (title, description, completed) VALUES (?, ?, ?)', [task.title, task.description, task.completed], (err, result) => {
+            if (err) {
+                console.error('Error creating task:', err);
+                return callback(err, null);
+            }
+            callback(null, result.insertId); // Return the new task's ID
+        });
+    },
+    updateTask: (id, task, callback) => {
+        db.query('UPDATE tasks SET title = ?, description = ?, completed = ? WHERE id = ?', [task.title, task.description, task.completed, id], (err, result) => {
+            if (err) {
+                console.error('Error updating task:', err);
+                return callback(err, null);
+            }
+            callback(null, result.affectedRows); // Return the number of affected rows
+        });
+    },
+    deleteTask: (id, callback) => {
+        db.query('DELETE FROM tasks WHERE id = ?', [id], (err, result) => {
+            if (err) {
+                console.error('Error deleting task:', err);
+                return callback(err, null);
+            }
+            callback(null, result.affectedRows); // Return the number of affected rows
+        });
+    },
+};
+
+module.exports = Task;
+EOF
+
+# Create routes/tasks.js
+cat <<EOF > routes/tasks.js
+const express = require('express');
+const router = express.Router();
+const Task = require('../models/task');
+const cors = require('cors'); // Import CORS
+
+router.use(cors()); // Enable CORS for all routes in this router
+
+// Get all tasks
+router.get('/', (req, res) => {
+    Task.getAllTasks((err, tasks) => {
+        if (err) {
+            return res.status(500).json({ error: 'Failed to fetch tasks' });
+        }
+        res.json(tasks);
+    });
+});
+
+// Get a single task by ID
+router.get('/:id', (req, res) => {
+    const taskId = req.params.id;
+    Task.getTaskById(taskId, (err, task) => {
+        if (err) {
+            return res.status(500).json({ error: 'Failed to fetch task' });
+        }
+        if (!task) {
+            return res.status(404).json({ message: 'Task not found' });
+        }
+        res.json(task);
+    });
+});
+
+// Create a new task
+router.post('/', (req, res) => {
+    const newTask = {
+        title: req.body.title,
+        description: req.body.description,
+        completed: req.body.completed,
+    };
+
+    Task.createTask(newTask, (err, taskId) => {
+        if (err) {
+            return res.status(500).json({ error: 'Failed to create task' });
+        }
+        res.status(201).json({ id: taskId, ...newTask }); // Respond with the created task including the ID
+    });
+});
+
+// Update an existing task
+router.put('/:id', (req, res) => {
+    const taskId = req.params.id;
+    const updatedTask = {
+        title: req.body.title,
+        description: req.body.description,
+        completed: req.body.completed,
+    };
+
+    Task.updateTask(taskId, updatedTask, (err, affectedRows) => {
+        if (err) {
+            return res.status(500).json({ error: 'Failed to update task' });
+        }
+        if (affectedRows === 0) {
+            return res.status(404).json({ message: 'Task not found' });
+        }
+        res.json({ message: 'Task updated successfully' });
+    });
+});
+
+// Delete a task
+router.delete('/:id', (req, res) => {
+    const taskId = req.params.id;
+
+    Task.deleteTask(taskId, (err, affectedRows) => {
+        if (err) {
+            return res.status(500).json({ error: 'Failed to delete task' });
+        }
+        if (affectedRows === 0) {
+            return res.status(404).json({ message: 'Task not found' });
+        }
+        res.json({ message: 'Task deleted successfully' });
+    });
+});
+
+module.exports = router;
+EOF
+
+# Create app.js
+cat <<EOF > app.js
+const express = require('express');
+const bodyParser = require('body-parser');
+const taskRoutes = require('./routes/tasks');
+const cors = require('cors'); // Import CORS
+
+const app = express();
+const port = process.env.PORT || 5000;
+
+// Middleware
+app.use(cors()); // Enable CORS for all routes
+app.use(bodyParser.json());
+
+// Routes
+app.use('/api/tasks', taskRoutes);
+
+app.listen(port, () => {
+    console.log(\`Server is running on port \${port}\`);
+});
+EOF
+
+echo "Project structure and files created successfully.  Remember to run 'npm install' in both the root and server directories, and then run 'npm install' in the client directory."
+echo "Also, configure your MySQL database and update the .env file with your credentials."
