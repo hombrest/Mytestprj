@@ -1,0 +1,9 @@
+{
+    "node_name": "Node2",
+    "node_status": "running",
+    "jobname": "JobB-Updated",
+    "user": "bob",
+    "start_time": "2025-06-01 08:45:00",
+    "end_time": "2025-06-01 08:56:00",
+    "duration": "00:11:00"
+}
