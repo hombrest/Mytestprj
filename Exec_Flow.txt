@@ -1,0 +1,60 @@
+select first 1 Flow, MaxRuns, RunSequence
+From RoleFlow
+, TestControl
+where Role = @Role
+and TestId = @TestId
+and JobType = @JobType
+and RunSequence > @RunSequence
+order by RunSequence
+
+set "RunSequence=0"
+
+:get_next_flow
+Call GetNextFlow.bat
+
+set "Prev_VTPeriod=%eVTCS_VTPeriod%"
+set "Prev_CSPeriod=%eVTCS_CSPeriod%"
+
+Call Execute_Flow %Flow% %MaxRuns%
+
+If NOT "%Prev_VTPeriod%"=="%eVTCS_VTPeriod%" (
+    goto get_next_flow
+) else If NOT "%Prev_CSPeriod%"=="%eVTCS_CSPeriod%" (
+    goto get_next_flow
+) else 
+
+
+<<<
+Execute_Flow.bat
+
+setlocal enabledelayedexpansion
+set "Flow=~%1"
+set "MaxRuns=~%2"
+
+set count=0
+
+:repeat_loop
+set /a count+=1
+echo Running command - Attempt !count!
+:: Replace this with your actual command
+echo executing %Flow%
+
+call GetJobInfo.bat
+
+If NOT "%Prev_VTPeriod%"=="%eVTCS_VTPeriod%" (
+    goto exitFlow
+) else If NOT "%Prev_CSPeriod%"=="%eVTCS_CSPeriod%" (
+    goto exitFlow
+)
+
+
+If VTPeriod is Changed
+    GetFlow
+else if CSPeriod is Changed 
+    GetFlow	
+	
+if !count! lss %MaxRuns% goto repeat_loop
+
+:exitFlow
+endlocal & set "eVTCS_VTPeriod=%VTPeriod%" & set "eVTCS_CSPeriod=%CSPeriod%"
+>>>
