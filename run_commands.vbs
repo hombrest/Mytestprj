@@ -3,6 +3,7 @@ Dim args, durationMin, numIterations
 Dim startTime, endTime, iterationCount
 Dim xlsmFile, scriptDir, xlApp, wb
 Dim shell, fso, logFile
+Dim secondDurationSec, secondNumIterations, secondIterationCount, secondNextRun
 
 ' PARSE ARGUMENTS
 Set args = WScript.Arguments
@@ -13,6 +14,8 @@ End If
 
 durationMin = CLng(args(0))
 numIterations = CLng(args(1))
+secondDurationSec = 90 ' 1.5 minutes per iteration
+secondNumIterations = 2 ' 2 iterations = 3 min total
 
 ' INITIALIZE GLOBALS
 Set shell = CreateObject("WScript.Shell")
@@ -64,19 +67,22 @@ startTime = Now()
 endTime = DateAdd("n", durationMin * numIterations, startTime)
 
 WScript.Echo "[START] " & FormatDateTime(startTime, 3)
-WScript.Echo "[PLAN] " & numIterations & " iterations of " & durationMin & " min"
-WScript.Echo "[END] " & FormatDateTime(endTime, 3)
+WScript.Echo "[MAIN LOOP] " & numIterations & " iterations of " & durationMin & " min"
+WScript.Echo "[SECOND LOOP] " & secondNumIterations & " iterations of " & secondDurationSec & " sec"
+WScript.Echo "[MAIN END] " & FormatDateTime(endTime, 3)
+WScript.Echo "[SECOND END] " & FormatDateTime(DateAdd("s", secondDurationSec * secondNumIterations, startTime), 3)
 WScript.Echo ""
 
 ' MAIN LOOP
 iterationCount = 0
+secondIterationCount = 0
+secondNextRun = startTime ' First second loop run at start
 Dim lastSqlUpdate
 lastSqlUpdate = Now()
 
 Do While iterationCount < numIterations
     iterationCount = iterationCount + 1
-    
-    WScript.Echo "[ITERATION] " & iterationCount & " START"
+    WScript.Echo "[MAIN ITERATION] " & iterationCount & " START"
     
     ' RUN START FUNCTIONS
     Dim startResults
@@ -89,8 +95,22 @@ Do While iterationCount < numIterations
     
     Do While Now() < iterationEndTime
         If Now() >= endTime Then
-            WScript.Echo "[DONE] End time reached!"
+            WScript.Echo "[DONE] Main end time reached!"
             Exit Do
+        End If
+        
+        ' CHECK SECOND LOOP
+        If secondIterationCount < secondNumIterations And Now() >= secondNextRun Then
+            secondIterationCount = secondIterationCount + 1
+            WScript.Echo "[SECOND ITERATION] " & secondIterationCount & " START"
+            
+            ' RUN SECOND LOOP END FUNCTIONS
+            Dim secondEndResults
+            secondEndResults = RunVbaFunctions("SECOND_END")
+            LogResults secondEndResults, "SECOND_END"
+            
+            WScript.Echo "[SECOND ITERATION] " & secondIterationCount & " END"
+            secondNextRun = DateAdd("s", secondDurationSec, secondNextRun) ' Schedule next run
         End If
         
         innerResults = RunVbaFunctions("INNER")
@@ -102,18 +122,18 @@ Do While iterationCount < numIterations
             lastSqlUpdate = Now()
         End If
         
-        WScript.Sleep 5000 ' 5s for high-frequency
+        WScript.Sleep 5000
     Loop
     
-    ' RUN END FUNCTIONS
+    ' RUN MAIN LOOP END FUNCTIONS
     Dim endResults
     endResults = RunVbaFunctions("END")
     LogResults endResults, "END"
     
-    WScript.Echo "[ITERATION] " & iterationCount & " END"
+    WScript.Echo "[MAIN ITERATION] " & iterationCount & " END"
     
     If Now() >= endTime Then
-        WScript.Echo "[DONE] Total end time reached!"
+        WScript.Echo "[DONE] Total main end time reached!"
         Exit Do
     End If
 Loop
@@ -146,6 +166,11 @@ Function RunVbaFunctions(phase)
         functions = Array( _
             Array("Module1", "CleanupSession", "End1"), _
             Array("Module1", "LogSummary", "SummaryA") _
+        )
+    ElseIf phase = "SECOND_END" Then
+        functions = Array( _
+            Array("Module1", "FinalCheck", "Check1"), _
+            Array("Module1", "LogMetrics", "MetricsA") _
         )
     Else ' INNER
         functions = Array( _
@@ -215,7 +240,7 @@ Sub UpdateSqlServer(results)
     
     Set cmd = CreateObject("ADODB.Command")
     cmd.ActiveConnection = conn
-    cmd.CommandType = 4 ' adCmdStoredProc
+    cmd.CommandType = 4
     cmd.CommandText = "UpdateVbaJobStatus"
     
     cmd.Parameters.Append cmd.CreateParameter("@IPAddress", 200, 1, 50, ipAddress)
