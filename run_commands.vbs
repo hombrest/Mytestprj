@@ -1,7 +1,7 @@
 Option Explicit
 Dim args, durationMin, numIterations
 Dim startTime, endTime, iterationCount
-Dim xlsmFile, scriptDir
+Dim xlsmFile, scriptDir, xlApp, wb
 Dim shell, fso, logFile
 
 ' PARSE ARGUMENTS
@@ -29,11 +29,35 @@ End If
 If Left(xlsmFile, 1) = """" Then xlsmFile = Mid(xlsmFile, 2)
 If Right(xlsmFile, 1) = """" Then xlsmFile = Left(xlsmFile, Len(xlsmFile) - 1)
 
-' SETUP CSV LOG FILE
+' SETUP CSV LOG
 logFile = scriptDir & "\VBA_Log_" & Replace(FormatDateTime(Now(), 3), ":", "-") & ".csv"
 Set fso.CreateTextFile(logFile, True).WriteLine "Timestamp,Result,Parameter"
 
 WScript.Echo "[LOG] Writing to: " & logFile
+
+' INITIALIZE EXCEL ONCE
+Set xlApp = Nothing
+WScript.Echo "[OPEN] Connecting to Excel..."
+On Error Resume Next
+Set xlApp = GetObject(, "Excel.Application")
+If Err.Number <> 0 Then
+    WScript.Echo "    [OPEN] No Excel running! Opening: " & xlsmFile
+    Set xlApp = CreateObject("Excel.Application")
+    xlApp.Visible = True
+    Set wb = xlApp.Workbooks.Open(xlsmFile)
+    wb.Activate
+Else
+    Set wb = xlApp.ActiveWorkbook
+    wb.Activate
+    WScript.Echo "    [REUSED] " & wb.Name
+End If
+Err.Clear
+On Error GoTo 0
+
+If wb Is Nothing Then
+    WScript.Echo "[FATAL] Cannot open workbook!"
+    WScript.Quit 1
+End If
 
 ' START TIMING
 startTime = Now()
@@ -56,10 +80,10 @@ Do While iterationCount < numIterations
     
     ' RUN START FUNCTIONS
     Dim startResults
-    startResults = RunVbaFunctions(xlsmFile, "START")
+    startResults = RunVbaFunctions("START")
     LogResults startResults, "START"
     
-    ' INNER LOOP
+    ' INNER LOOP (HIGH-FREQUENCY)
     Dim innerResults, iterationEndTime
     iterationEndTime = DateAdd("n", durationMin, Now())
     
@@ -69,7 +93,7 @@ Do While iterationCount < numIterations
             Exit Do
         End If
         
-        innerResults = RunVbaFunctions(xlsmFile, "INNER")
+        innerResults = RunVbaFunctions("INNER")
         LogResults innerResults, "INNER"
         
         ' SQL UPDATE EVERY MINUTE
@@ -78,12 +102,12 @@ Do While iterationCount < numIterations
             lastSqlUpdate = Now()
         End If
         
-        WScript.Sleep 10000
+        WScript.Sleep 5000 ' 5s for high-frequency
     Loop
     
     ' RUN END FUNCTIONS
     Dim endResults
-    endResults = RunVbaFunctions(xlsmFile, "END")
+    endResults = RunVbaFunctions("END")
     LogResults endResults, "END"
     
     WScript.Echo "[ITERATION] " & iterationCount & " END"
@@ -95,29 +119,24 @@ Do While iterationCount < numIterations
 Loop
 
 WScript.Echo "[COMPLETED] " & FormatDateTime(Now(), 3)
+xlApp.Quit
 MsgBox "Execution complete! Log: " & logFile, vbInformation, "DONE"
 
-Function RunVbaFunctions(filePath, phase)
+Function RunVbaFunctions(phase)
     On Error Resume Next
-    Dim xlApp, wb, result, results, functions, i
+    Dim result, results, functions, i
     Err.Clear
     
-    ' CONNECT TO EXCEL
-    WScript.Echo "    [" & phase & "] Connecting to Excel..."
-    Set xlApp = GetObject(, "Excel.Application")
-    If Err.Number <> 0 Then
-        WScript.Echo "    [ERROR] No Excel running! Opening: " & filePath
+    ' ENSURE EXCEL IS READY
+    If wb Is Nothing Then
+        WScript.Echo "    [" & phase & "] [ERROR] Workbook lost! Reopening..."
         Set xlApp = CreateObject("Excel.Application")
         xlApp.Visible = True
-        Set wb = xlApp.Workbooks.Open(filePath)
+        Set wb = xlApp.Workbooks.Open(xlsmFile)
         wb.Activate
-    Else
-        Set wb = xlApp.ActiveWorkbook
-        wb.Activate
-        WScript.Echo "    [REUSED] " & wb.Name
     End If
     
-    ' DEFINE FUNCTIONS (ASSUME DOUBLE OUTPUT)
+    ' DEFINE FUNCTIONS
     If phase = "START" Then
         functions = Array( _
             Array("Module1", "InitSession", "Start1"), _
@@ -208,7 +227,7 @@ Sub UpdateSqlServer(results)
         WScript.Echo "[SQL ERROR] Stored proc failed: " & Err.Description
         LogResults Array(Array(Now(), -1, "SQL ERROR: " & Err.Description)), "SQL"
     Else
-        WScript.Echo "[SQL] Stored proc called at " & FormatDateTime(Now(), 3) & ": IP=" & ipAddress & ", Status=" & jobStatus
+        WScript.Echo "[SQL] Stored proc called: IP=" & ipAddress & ", Status=" & jobStatus
     End If
     
     conn.Close
