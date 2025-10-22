@@ -1,5 +1,5 @@
 Option Explicit
-Dim args, durationMin, numIterations
+Dim durationMin, numIterations
 Dim startTime, endTime, iterationCount
 Dim xlsmFile, scriptDir, xlApp, wb
 Dim shell, fso, logFile
@@ -7,24 +7,12 @@ Dim secondDurationSec, secondNumIterations, secondIterationCount, secondNextRun
 Dim startFunctions, innerFunctions, endFunctions, secondEndFunctions
 Dim shouldStop ' Flag for control table
 
-' PARSE ARGUMENTS
-Set args = WScript.Arguments
-If args.Count < 2 Then
-    WScript.Echo "Usage: cscript run_commands.vbs [duration_min] [iterations]"
-    WScript.Quit 1
-End If
-
-durationMin = CLng(args(0))
-numIterations = CLng(args(1))
-secondDurationSec = 90 ' 1.5 minutes per iteration
-secondNumIterations = 2 ' 2 iterations = 3 min total
-shouldStop = False ' Initialize stop flag
-
 ' INITIALIZE GLOBALS
 Set shell = CreateObject("WScript.Shell")
 Set fso = CreateObject("Scripting.FileSystemObject")
 scriptDir = fso.GetParentFolderName(WScript.ScriptFullName)
 xlsmFile = shell.Environment("PROCESS")("EXCEL_FILE")
+shouldStop = False ' Initialize stop flag
 
 If xlsmFile = "" Then
     WScript.Echo "[ERROR] EXCEL_FILE not defined!"
@@ -40,6 +28,10 @@ logFile = scriptDir & "\VBA_Log_" & Replace(FormatDateTime(Now(), 3), ":", "-") 
 Set fso.CreateTextFile(logFile, True).WriteLine "Timestamp,Result,Parameter"
 
 WScript.Echo "[LOG] Writing to: " & logFile
+
+' LOAD CONFIG FROM SQL
+WScript.Echo "[SQL] Loading configuration from database..."
+LoadConfig
 
 ' LOAD VBA FUNCTIONS FROM SQL
 WScript.Echo "[SQL] Loading VBA functions from database..."
@@ -152,6 +144,57 @@ Loop
 WScript.Echo "[COMPLETED] " & FormatDateTime(Now(), 3)
 xlApp.Quit
 MsgBox "Execution complete! Log: " & logFile, vbInformation, "DONE"
+
+Sub LoadConfig()
+    On Error Resume Next
+    Dim conn, rs
+    Set conn = CreateObject("ADODB.Connection")
+    conn.ConnectionString = "Provider=SQLOLEDB;Server=YOUR_SERVER;Database=YOUR_DB;Trusted_Connection=Yes;"
+    conn.Open
+    
+    If Err.Number <> 0 Then
+        WScript.Echo "[SQL ERROR] Cannot connect to load config: " & Err.Description
+        WScript.Quit 1
+    End If
+    
+    Set rs = CreateObject("ADODB.Recordset")
+    rs.Open "SELECT ConfigKey, ConfigValue FROM VbaConfig", conn
+    
+    If Err.Number <> 0 Then
+        WScript.Echo "[SQL ERROR] Cannot query config: " & Err.Description
+        conn.Close
+        WScript.Quit 1
+    End If
+    
+    ' DEFAULT VALUES
+    durationMin = 1
+    numIterations = 4
+    secondDurationSec = 90
+    secondNumIterations = 2
+    
+    Do Until rs.EOF
+        Dim key, value
+        key = rs("ConfigKey").Value
+        value = CLng(rs("ConfigValue").Value)
+        
+        If key = "MainDurationMin" Then
+            durationMin = value
+        ElseIf key = "MainIterations" Then
+            numIterations = value
+        ElseIf key = "SecondDurationSec" Then
+            secondDurationSec = value
+        ElseIf key = "SecondIterations" Then
+            secondNumIterations = value
+        End If
+        
+        rs.MoveNext
+    Loop
+    
+    rs.Close
+    conn.Close
+    
+    WScript.Echo "[SQL] Loaded config: MainDurationMin=" & durationMin & ", MainIterations=" & numIterations & ", SecondDurationSec=" & secondDurationSec & ", SecondIterations=" & secondNumIterations
+End Sub
 
 Sub LoadVbaFunctions()
     On Error Resume Next
