@@ -1,0 +1,312 @@
+# https://grok.com/share/c2hhcmQtMg%3D%3D_a56ceb13-2f21-4ce4-afc2-3263657b8af1
+# Global variables
+$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$xlsmFile = $env:EXCEL_FILE
+$logFile = "$scriptDir\VBA_Log_$(Get-Date -Format 'HH-mm-ss').csv"
+$shouldStop = $false
+$startFunctions = @()
+$innerFunctions = @()
+$endFunctions = @()
+$secondEndFunctions = @()
+
+# Validate EXCEL_FILE environment variable
+if (-not $xlsmFile) {
+    Write-Host "[ERROR] EXCEL_FILE not defined!"
+    exit 1
+}
+
+# Strip quotes from file path
+$xlsmFile = $xlsmFile.Trim('"')
+
+# Setup CSV log
+"Timestamp,Result,Parameter" | Out-File -FilePath $logFile -Encoding UTF8
+Write-Host "[LOG] Writing to: $logFile"
+
+# Load configuration from SQL
+function Load-Config {
+    try {
+        $conn = New-Object System.Data.SqlClient.SqlConnection
+        $conn.ConnectionString = "Server=YOUR_SERVER;Database=YOUR_DB;Integrated Security=True;"
+        $conn.Open()
+
+        $cmd = $conn.CreateCommand()
+        $cmd.CommandText = "SELECT ConfigKey, ConfigValue FROM VbaConfig"
+        $reader = $cmd.ExecuteReader()
+
+        # Default values
+        $script:durationMin = 1
+        $script:numIterations = 4
+        $script:secondDurationSec = 90
+        $script:secondNumIterations = 2
+
+        while ($reader.Read()) {
+            $key = $reader["ConfigKey"]
+            $value = [int]$reader["ConfigValue"]
+            switch ($key) {
+                "MainDurationMin" { $script:durationMin = $value }
+                "MainIterations" { $script:numIterations = $value }
+                "SecondDurationSec" { $script:secondDurationSec = $value }
+                "SecondIterations" { $script:secondNumIterations = $value }
+            }
+        }
+
+        Write-Host "[SQL] Loaded config: MainDurationMin=$durationMin, MainIterations=$numIterations, SecondDurationSec=$secondDurationSec, SecondIterations=$secondNumIterations"
+        
+        $reader.Close()
+        $conn.Close()
+    }
+    catch {
+        Write-Host "[SQL ERROR] Cannot load config: $_"
+        exit 1
+    }
+}
+
+# Load VBA functions from SQL
+function Load-VbaFunctions {
+    try {
+        $conn = New-Object System.Data.SqlClient.SqlConnection
+        $conn.ConnectionString = "Server=YOUR_SERVER;Database=YOUR_DB;Integrated Security=True;"
+        $conn.Open()
+
+        $cmd = $conn.CreateCommand()
+        $cmd.CommandText = "SELECT Phase, ModuleName, FunctionName, Parameter FROM VbaFunctions ORDER BY Phase"
+        $reader = $cmd.ExecuteReader()
+
+        $script:startFunctions = @()
+        $script:innerFunctions = @()
+        $script:endFunctions = @()
+        $script:secondEndFunctions = @()
+
+        while ($reader.Read()) {
+            $phase = $reader["Phase"]
+            $moduleName = $reader["ModuleName"]
+            $functionName = $reader["FunctionName"]
+            $parameter = $reader["Parameter"]
+            $function = @{ ModuleName = $moduleName; FunctionName = $functionName; Parameter = $parameter }
+
+            switch ($phase) {
+                "START" { $script:startFunctions += $function }
+                "INNER" { $script:innerFunctions += $function }
+                "END" { $script:endFunctions += $function }
+                "SECOND_END" { $script:secondEndFunctions += $function }
+            }
+        }
+
+        Write-Host "[SQL] Loaded functions: START=$($startFunctions.Count), INNER=$($innerFunctions.Count), END=$($endFunctions.Count), SECOND_END=$($secondEndFunctions.Count)"
+        
+        $reader.Close()
+        $conn.Close()
+    }
+    catch {
+        Write-Host "[SQL ERROR] Cannot load functions: $_"
+        exit 1
+    }
+}
+
+# Initialize Excel
+Write-Host "[OPEN] Connecting to Excel..."
+try {
+    $xlApp = [System.Runtime.InteropServices.Marshal]::GetActiveObject("Excel.Application")
+    Write-Host "    [REUSED] $($xlApp.ActiveWorkbook.Name)"
+}
+catch {
+    Write-Host "    [OPEN] No Excel running! Opening: $xlsmFile"
+    $xlApp = New-Object -ComObject Excel.Application
+    $xlApp.Visible = $true
+}
+finally {
+    $wb = $xlApp.Workbooks.Open($xlsmFile)
+    $wb.Activate()
+}
+
+if (-not $wb) {
+    Write-Host "[FATAL] Cannot open workbook!"
+    exit 1
+}
+
+# Load configuration and functions
+Load-Config
+Load-VbaFunctions
+
+# Start timing
+$startTime = Get-Date
+$endTime = $startTime.AddMinutes($durationMin * $numIterations)
+
+Write-Host "[START] $(Get-Date $startTime -Format 'HH:mm:ss')"
+Write-Host "[MAIN LOOP] $numIterations iterations of $durationMin min"
+Write-Host "[SECOND LOOP] $secondNumIterations iterations of $secondDurationSec sec"
+Write-Host "[MAIN END] $(Get-Date $endTime -Format 'HH:mm:ss')"
+Write-Host "[SECOND END] $(Get-Date $startTime.AddSeconds($secondDurationSec * $secondNumIterations) -Format 'HH:mm:ss')"
+Write-Host ""
+
+# Main loop
+$iterationCount = 0
+$secondIterationCount = 0
+$secondNextRun = $startTime
+$lastSqlUpdate = $startTime
+
+while ($iterationCount -lt $numIterations) {
+    $iterationCount++
+    Write-Host "[MAIN ITERATION] $iterationCount START"
+    
+    # Run START functions
+    $startResults = Run-VbaFunctions "START"
+    Log-Results $startResults "START"
+    
+    # Inner loop (high-frequency)
+    $iterationEndTime = (Get-Date).AddMinutes($durationMin)
+    
+    while ((Get-Date) -lt $iterationEndTime) {
+        if ((Get-Date) -ge $endTime -or $shouldStop) {
+            Write-Host "[DONE] Main end time reached or stop signaled!"
+            break
+        }
+        
+        # Check second loop
+        if ($secondIterationCount -lt $secondNumIterations -and (Get-Date) -ge $secondNextRun) {
+            $secondIterationCount++
+            Write-Host "[SECOND ITERATION] $secondIterationCount START"
+            
+            # Run SECOND_END functions
+            $secondEndResults = Run-VbaFunctions "SECOND_END"
+            Log-Results $secondEndResults "SECOND_END"
+            
+            Write-Host "[SECOND ITERATION] $secondIterationCount END"
+            $secondNextRun = $secondNextRun.AddSeconds($secondDurationSec)
+        }
+        
+        $innerResults = Run-VbaFunctions "INNER"
+        Log-Results $innerResults "INNER"
+        
+        # SQL update every minute
+        if (((Get-Date) - $lastSqlUpdate).TotalSeconds -ge 60) {
+            Update-SqlServer $innerResults
+            $lastSqlUpdate = Get-Date
+            if ($shouldStop) {
+                Write-Host "[CONTROL] Stop signaled by VbaControl table!"
+                break
+            }
+        }
+        
+        Start-Sleep -Milliseconds 5000
+    }
+    
+    # Run END functions
+    $endResults = Run-VbaFunctions "END"
+    Log-Results $endResults "END"
+    
+    Write-Host "[MAIN ITERATION] $iterationCount END"
+    
+    if ((Get-Date) -ge $endTime -or $shouldStop) {
+        Write-Host "[DONE] Total main end time reached or stop signaled!"
+        break
+    }
+}
+
+Write-Host "[COMPLETED] $(Get-Date -Format 'HH:mm:ss')"
+$xlApp.Quit()
+[System.Runtime.InteropServices.Marshal]::ReleaseComObject($xlApp) | Out-Null
+[System.Windows.Forms.MessageBox]::Show("Execution complete! Log: $logFile", "DONE", 0, 64)
+
+function Run-VbaFunctions {
+    param ($phase)
+    $results = @()
+    
+    # Ensure Excel is ready
+    if (-not $wb) {
+        Write-Host "    [$phase] [ERROR] Workbook lost! Reopening..."
+        $script:xlApp = New-Object -ComObject Excel.Application
+        $xlApp.Visible = $true
+        $script:wb = $xlApp.Workbooks.Open($xlsmFile)
+        $wb.Activate()
+    }
+    
+    # Select function array
+    $functions = switch ($phase) {
+        "START" { $startFunctions }
+        "END" { $endFunctions }
+        "SECOND_END" { $secondEndFunctions }
+        default { $innerFunctions }
+    }
+    
+    # Handle empty function list
+    if ($functions.Count -eq 0) {
+        Write-Host "    [$phase] No functions defined!"
+        return $results
+    }
+    
+    foreach ($func in $functions) {
+        Write-Host "    [$phase] $($func.ModuleName).$($func.FunctionName)( ""$($func.Parameter)"" )"
+        try {
+            $result = $wb.Application.Run("$($func.ModuleName).$($func.FunctionName)", $func.Parameter)
+            $results += ,@((Get-Date), [double]$result, $func.Parameter)
+            Write-Host "    [SUCCESS] $result"
+        }
+        catch {
+            $errorMsg = $_.Exception.Message -replace "[\r\n]+", " " -replace "\t", " " -replace '"', "'"
+            $results += ,@((Get-Date), -1, "$($func.Parameter) ERROR: $($_.Exception.HResult)")
+            Write-Host "    [ERROR] $($_.Exception.HResult): $errorMsg"
+        }
+    }
+    
+    return $results
+}
+
+function Log-Results {
+    param ($results, $phase)
+    foreach ($result in $results) {
+        """$($result[0].ToString('HH:mm:ss')"",""$($result[1])"",""$($result[2])""" | Out-File -FilePath $logFile -Append -Encoding UTF8
+    }
+}
+
+function Update-SqlServer {
+    param ($results)
+    try {
+        # Get IP address
+        $ipAddress = (Get-WmiObject -Class Win32_NetworkAdapterConfiguration | Where-Object { $_.IPEnabled }).IPAddress[0]
+        if (-not $ipAddress) { $ipAddress = "UNKNOWN" }
+        
+        # Determine job status
+        $jobStatus = "SUCCESS"
+        foreach ($result in $results) {
+            if ($result[1] -eq -1) {
+                $jobStatus = "ERROR"
+                break
+            }
+        }
+        
+        # Connect to SQL
+        $conn = New-Object System.Data.SqlClient.SqlConnection
+        $conn.ConnectionString = "Server=YOUR_SERVER;Database=YOUR_DB;Integrated Security=True;"
+        $conn.Open()
+        
+        # Check control table
+        $cmd = $conn.CreateCommand()
+        $cmd.CommandText = "SELECT TOP 1 ShouldStop FROM VbaControl ORDER BY CreatedAt DESC"
+        $reader = $cmd.ExecuteReader()
+        if ($reader.Read()) {
+            $script:shouldStop = [bool]$reader["ShouldStop"]
+            Write-Host "[CONTROL] ShouldStop = $shouldStop"
+        }
+        else {
+            Write-Host "[CONTROL] No control record found!"
+        }
+        $reader.Close()
+        
+        # Call stored procedure
+        $cmd = $conn.CreateCommand()
+        $cmd.CommandType = [System.Data.CommandType]::StoredProcedure
+        $cmd.CommandText = "UpdateVbaJobStatus"
+        $cmd.Parameters.AddWithValue("@IPAddress", $ipAddress) | Out-Null
+        $cmd.Parameters.AddWithValue("@JobStatus", $jobStatus) | Out-Null
+        $cmd.ExecuteNonQuery() | Out-Null
+        
+        Write-Host "[SQL] Stored proc called: IP=$ipAddress, Status=$jobStatus"
+        
+        $conn.Close()
+    }
+    catch {
+        Write-Host "[SQL ERROR] $_"
+        """$(Get-Date -Format 'HH:mm:ss')"",-1,""SQL ERROR: $($_ -replace '[\r\n]+', ' ' -replace '\t', ' ' -replace '"', "'")""" | Out-File -FilePath $logFile -Append -Encoding UTF8
+    }
+}
