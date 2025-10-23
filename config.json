@@ -1,0 +1,19 @@
+{
+    "database": {
+        "server": "10.100.104.189",
+        "database": "auto_test",
+        "username": "sa",
+        "password": "P@ssw0rd2025"
+    },
+    "logging": {
+        "log_directory": "C:\\Test\\log",
+        "log_level": "INFO"
+    },
+    "execution": {
+        "dev_mode": true,
+        "default_duration_min": 1,
+        "default_num_iterations": 4,
+        "default_second_duration_min": 1,
+        "default_second_num_iterations": 2
+    }
+}

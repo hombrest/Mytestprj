@@ -1,0 +1,146 @@
+# LoadTestFramework.ps1
+
+class LoadTestConfig {
+    [string]$Server
+    [string]$Database
+    [string]$Username
+    [string]$Password
+    [string]$LogDirectory
+    [string]$LogLevel
+    [bool]$DevMode
+    [int]$DefaultDurationMin
+    [int]$DefaultNumIterations
+    [int]$DefaultSecondDurationMin
+    [int]$DefaultSecondNumIterations
+    
+    LoadTestConfig([string]$configPath) {
+        $config = Get-Content -Path $configPath -Raw | ConvertFrom-Json
+        $this.Server = $config.database.server
+        $this.Database = $config.database.database
+        $this.Username = $config.database.username
+        $this.Password = $config.database.password
+        $this.LogDirectory = $config.logging.log_directory
+        $this.LogLevel = $config.logging.log_level
+        $this.DevMode = $config.execution.dev_mode
+        $this.DefaultDurationMin = $config.execution.default_duration_min
+        $this.DefaultNumIterations = $config.execution.default_num_iterations
+        $this.DefaultSecondDurationMin = $config.execution.default_second_duration_min
+        $this.DefaultSecondNumIterations = $config.execution.default_second_num_iterations
+    }
+}
+
+class LoadTestFramework {
+    [LoadTestConfig]$Config
+    [string]$TestId
+    [string]$UserRole
+    [string]$IpAddress
+    
+    LoadTestFramework() {
+        $this.LoadConfiguration()
+        $this.TestId = $env:eVTCS_TestId
+        $this.UserRole = $env:eVTCS_User_Script
+        $this.IpAddress = $this.GetIPAddress()
+        if ([string]::IsNullOrEmpty($this.IpAddress)) {
+            $this.IpAddress = "UNKNOWN"
+        }
+    }
+    
+    [void] LoadConfiguration() {
+        $configPaths = @(
+            "$PSScriptRoot\config.json",
+            "$env:APPDATA\LoadTestFramework\config.json",
+            "$env:PROGRAMDATA\LoadTestFramework\config.json"
+        )
+        
+        $configPath = $null
+        foreach ($path in $configPaths) {
+            if (Test-Path $path) {
+                $configPath = $path
+                break
+            }
+        }
+        
+        if ($null -eq $configPath) {
+            Write-Error "[ERROR] Configuration file not found in any expected location!"
+            exit 1
+        }
+        
+        $this.Config = [LoadTestConfig]::new($configPath)
+        Write-Host "[CONFIG] Loaded from: $configPath"
+    }
+    
+    [string] GetIPAddress() {
+        try {
+            $networkInterfaces = [System.Net.NetworkInformation.NetworkInterface]::GetAllNetworkInterfaces()
+            $activeInterface = $networkInterfaces | Where-Object { $_.OperationalStatus -eq 'Up' -and $_.NetworkInterfaceType -ne 'Loopback' }
+            
+            foreach ($interface in $activeInterface) {
+                $properties = $interface.GetIPProperties()
+                $unicastAddresses = $properties.UnicastAddresses | Where-Object { !$_.Address.IsLoopback -and $_.Address.AddressFamily -eq 'InterNetwork' }
+                if ($unicastAddresses) {
+                    return $unicastAddresses[0].Address.ToString()
+                }
+            }
+            return ""
+        }
+        catch {
+            Write-Warning "Error getting IP address: $($_.Exception.Message)"
+            return ""
+        }
+    }
+    
+    [void] LoadConfigurationFromDatabase() {
+        Write-Host "[SQL] Loading configuration from database..."
+        
+        $connectionString = "Provider=SQLOLEDB;Data Source=$($this.Config.Server);Initial Catalog=$($this.Config.Database);User ID=$($this.Config.Username);Password=$($this.Config.Password);"
+        
+        $connection = New-Object -ComObject "ADODB.Connection"
+        $command = New-Object -ComObject "ADODB.Command"
+        $recordset = New-Object -ComObject "ADODB.Recordset"
+        
+        try {
+            $connection.Open($connectionString)
+            $command.ActiveConnection = $connection
+            $command.CommandText = "SELECT TOP 1 VTDurationMin, NumOfVTPeriod, CSDurationMin, NumOfCSPeriod FROM TestControl WHERE TestId = ?"
+            
+            $commandText = $command.CommandText.Replace("?", "'$($this.TestId)'")
+            $command.CommandText = $commandText
+            $command.CommandType = 1
+            
+            $recordset = $command.Execute()
+            
+            # Set default values from config
+            $Script:durationMin = $this.Config.DefaultDurationMin
+            $Script:numIterations = $this.Config.DefaultNumIterations
+            $Script:secondDurationMin = $this.Config.DefaultSecondDurationMin
+            $Script:secondNumIterations = $this.Config.DefaultSecondNumIterations
+            
+            if (-not $recordset.EOF) {
+                $Script:durationMin = [int]$recordset.Fields("VTDurationMin").Value
+                $Script:numIterations = [int]$recordset.Fields("NumOfVTPeriod").Value
+                $Script:secondDurationMin = [int]$recordset.Fields("CSDurationMin").Value
+                $Script:secondNumIterations = [int]$recordset.Fields("NumOfCSPeriod").Value
+            }
+            
+            Write-Host "[SQL] Loaded config: MainDurationMin=$($Script:durationMin), MainIterations=$($Script:numIterations), SecondDurationMin=$($Script:secondDurationMin), SecondIterations=$($Script:secondNumIterations)"
+        }
+        catch {
+            Write-Error "[SQL ERROR] Cannot query config: $($_.Exception.Message)"
+            exit 1
+        }
+        finally {
+            if ($recordset.State -eq 1) { $recordset.Close() }
+            if ($connection.State -eq 1) { $connection.Close() }
+            [System.Runtime.Interopservices.Marshal]::ReleaseComObject($recordset) | Out-Null
+            [System.Runtime.Interopservices.Marshal]::ReleaseComObject($command) | Out-Null
+            [System.Runtime.Interopservices.Marshal]::ReleaseComObject($connection) | Out-Null
+        }
+    }
+    
+    # Add other methods here...
+}
+
+# Main execution
+$framework = [LoadTestFramework]::new()
+$framework.LoadConfigurationFromDatabase()
+# ... rest of execution
