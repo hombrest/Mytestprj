@@ -10,13 +10,25 @@ import json
 import pyodbc
 import socket
 import subprocess
+import random
 from typing import List, Dict, Tuple, Any, Optional
 import logging
 from dataclasses import dataclass
 from contextlib import contextmanager
+from func_timeout import func_timeout, FunctionTimedOut
 
-# Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+# Configure logging with separate console log file
+log_directory = os.path.join(os.getcwd(), 'logs')
+os.makedirs(log_directory, exist_ok=True)
+console_log_file = os.path.join(log_directory, f'console_{datetime.datetime.now().strftime("%Y%m%d-%H%M%S")}.log')
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler(console_log_file),  # Save console output to separate log file
+        logging.StreamHandler()  # Output to console
+    ]
+)
 logger = logging.getLogger(__name__)
 
 @dataclass
@@ -24,6 +36,9 @@ class FunctionInfo:
     module_name: str
     function_name: str
     parameter: str
+    interval_seconds: float
+    throughput: int
+    timeout_seconds: float  # Timeout for VBA functions
 
 @dataclass
 class DatabaseConfig:
@@ -44,6 +59,10 @@ class ExecutionConfig:
     default_num_iterations: int
     default_second_duration_min: int
     default_second_num_iterations: int
+    default_thinking_time: int
+    default_inner_interval: float
+    default_wait_time_seconds: int
+    default_timeout_seconds: float  # Default VBA timeout
 
 @dataclass
 class LoadTestConfig:
@@ -53,66 +72,47 @@ class LoadTestConfig:
 
 class LoadTestFramework:
     def __init__(self):
-        # Load configuration first
         self.config = self.load_configuration()
-        
-        # Initialize other variables
         self.duration_min: int = self.config.execution.default_duration_min
         self.num_iterations: int = self.config.execution.default_num_iterations
         self.second_duration_min: int = self.config.execution.default_second_duration_min
         self.second_num_iterations: int = self.config.execution.default_second_num_iterations
+        self.thinking_time: int = self.config.execution.default_thinking_time
+        self.default_inner_interval: float = self.config.execution.default_inner_interval
+        self.default_timeout_seconds: float = self.config.execution.default_timeout_seconds
         self.second_iteration_count: int = 0
         self.second_next_run: datetime.datetime = datetime.datetime.min
         self.iteration_count: int = 0
         self.should_stop: bool = False
         self.test_id: str = os.environ.get('eVTCS_TestId', '')
-        self.user_role: str = os.environ.get('eVTCS_User_Script', '')
+        self.user_role: str = os.environ.get('eVTCS_UserRole', '')
         self.ip_address: str = self.get_ip_address()
-        
         if not self.ip_address:
             self.ip_address = "UNKNOWN"
-        
-        # Excel objects
         self.xl_app = None
         self.wb = None
-        
-        # File system objects
         self.script_dir: str = ""
         self.xlsm_file: str = ""
         self.log_file: str = ""
-        
-        # Timing variables
         self.start_time: datetime.datetime = datetime.datetime.min
         self.end_time: datetime.datetime = datetime.datetime.min
-        
-        # Function arrays
         self.start_functions: List[FunctionInfo] = []
         self.inner_functions: List[FunctionInfo] = []
         self.end_functions: List[FunctionInfo] = []
         self.second_end_functions: List[FunctionInfo] = []
         self.pso_functions: List[FunctionInfo] = []
         self.psc_functions: List[FunctionInfo] = []
-        
-        # Setup logging based on config
+        self.inner_function_last_run: Dict[Tuple[str, str, str], datetime.datetime] = {}
+        self.wait_time: int = self.config.execution.default_wait_time_seconds
         self.setup_logging()
     
     def load_configuration(self) -> LoadTestConfig:
         """Load configuration from file with multiple fallback locations"""
-        # Define possible config file locations in order of preference
         config_paths = [
-            # 1. Same directory as executable
             os.path.join(os.path.dirname(sys.executable if getattr(sys, 'frozen', False) else __file__), 'config.json'),
-            
-            # 2. Subdirectory in executable directory
             os.path.join(os.path.dirname(sys.executable if getattr(sys, 'frozen', False) else __file__), 'config', 'config.json'),
-            
-            # 3. Current working directory
             os.path.join(os.getcwd(), 'config.json'),
-            
-            # 4. User's roaming app data
             os.path.join(os.path.expanduser('~'), 'AppData', 'Roaming', 'LoadTestFramework', 'config.json'),
-            
-            # 5. System-wide app data
             os.path.join(os.environ.get('PROGRAMDATA', ''), 'LoadTestFramework', 'config.json'),
         ]
         
@@ -134,7 +134,6 @@ class LoadTestFramework:
             with open(config_file, 'r', encoding='utf-8') as f:
                 config_data = json.load(f)
             
-            # Create configuration objects
             db_config = DatabaseConfig(
                 server=config_data['database']['server'],
                 database=config_data['database']['database'],
@@ -152,7 +151,11 @@ class LoadTestFramework:
                 default_duration_min=config_data['execution']['default_duration_min'],
                 default_num_iterations=config_data['execution']['default_num_iterations'],
                 default_second_duration_min=config_data['execution']['default_second_duration_min'],
-                default_second_num_iterations=config_data['execution']['default_second_num_iterations']
+                default_second_num_iterations=config_data['execution']['default_second_num_iterations'],
+                default_thinking_time=config_data['execution']['default_thinking_time'],
+                default_inner_interval=config_data['execution'].get('default_inner_interval', 3.0),
+                default_wait_time_seconds=config_data['execution'].get('default_wait_time_seconds', 10),
+                default_timeout_seconds=config_data['execution'].get('default_timeout_seconds', 10.0)
             )
             
             config = LoadTestConfig(
@@ -174,11 +177,13 @@ class LoadTestFramework:
         log_dir = self.config.logging.log_directory
         os.makedirs(log_dir, exist_ok=True)
         
+        logging.getLogger().handlers = []
         logging.basicConfig(
             level=log_level,
             format='%(asctime)s - %(levelname)s - %(message)s',
             handlers=[
                 logging.FileHandler(os.path.join(log_dir, f'loadtest_{self.test_id}.log')),
+                logging.FileHandler(console_log_file),
                 logging.StreamHandler()
             ]
         )
@@ -187,74 +192,67 @@ class LoadTestFramework:
         """Initialize the script with environment variables and setup"""
         logger.info("[INIT] Initializing Python script...")
         
-        # Get environment variables
         self.xlsm_file = os.environ.get('eVTCS_Program', '')
-        
-        # Validate required variables
         if not self.xlsm_file:
             logger.error("[ERROR] EXCEL_FILE not defined!")
             sys.exit(1)
         
-        # Strip quotes from xlsm_file if present
         if self.xlsm_file.startswith('"'):
             self.xlsm_file = self.xlsm_file[1:]
         if self.xlsm_file.endswith('"'):
             self.xlsm_file = self.xlsm_file[:-1]
         
-        # Setup log file
-        formatted_now_str = self.get_log_file_dt()
-        self.log_file = f"{self.config.logging.log_directory}\\{self.test_id}-{self.ip_address}-jmeter_logfile_{formatted_now_str}.log"
+        logfile_time = datetime.datetime.now().strftime("%Y%m%d-%H")
+        self.log_file = f"{self.config.logging.log_directory}\\{self.test_id}-{self.ip_address}-jmeter_logfile_{logfile_time}.log"
         
-        # Create log directory if it doesn't exist
         log_dir = os.path.dirname(self.log_file)
         os.makedirs(log_dir, exist_ok=True)
         
-        # Create log file with header
         with open(self.log_file, 'w', encoding='utf-8') as f:
             f.write("Timestamp,Result,Parameter\n")
         
         logger.info(f"[LOG] Writing to: {self.log_file}")
     
     def get_ip_address(self) -> str:
-        """Get the primary IP address of the machine"""
+        """Get the hostname of the machine since internet is unavailable"""
         try:
-            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            s.connect(("8.8.8.8", 80))
-            ip_address = s.getsockname()[0]
-            s.close()
-            return ip_address
-        except:
-            return ""
+            return socket.gethostname()
+        except Exception as e:
+            logger.warning(f"Failed to get hostname: {str(e)}")
+            return "UNKNOWN"
     
     def load_configuration_from_database(self):
         """Load configuration from database using config values"""
         logger.info("[SQL] Loading configuration from database...")
         
         try:
-            # Use configuration values for connection
             conn_str = f"DRIVER={{SQL Server}};SERVER={self.config.database.server};DATABASE={self.config.database.database};UID={self.config.database.username};PWD={self.config.database.password}"
             
             with pyodbc.connect(conn_str) as conn:
                 cursor = conn.cursor()
                 
-                query = "SELECT TOP 1 VTDurationMin, NumOfVTPeriod, CSDurationMin, NumOfCSPeriod FROM TestControl WHERE TestId = ?"
+                query = "SELECT TOP 1 VTDurationMin, NumOfVTPeriod, CSDurationMin, NumOfCSPeriod, WaitTimeSeconds FROM TestControl WHERE TestId = ?"
                 cursor.execute(query, (self.test_id,))
                 
                 row = cursor.fetchone()
                 
-                # Set values from config as defaults
                 self.duration_min = self.config.execution.default_duration_min
                 self.num_iterations = self.config.execution.default_num_iterations
                 self.second_duration_min = self.config.execution.default_second_duration_min
                 self.second_num_iterations = self.config.execution.default_second_num_iterations
+                self.wait_time = self.config.execution.default_wait_time_seconds
                 
                 if row:
                     self.duration_min = int(row[0])
                     self.num_iterations = int(row[1])
                     self.second_duration_min = int(row[2])
                     self.second_num_iterations = int(row[3])
+                    self.wait_time = int(row[4]) if row[4] is not None else self.config.execution.default_wait_time_seconds
                 
-                logger.info(f"[SQL] Loaded config: MainDurationMin={self.duration_min}, MainIterations={self.num_iterations}, SecondDurationMin={self.second_duration_min}, SecondIterations={self.second_num_iterations}")
+                if self.wait_time < 0:
+                    self.wait_time = random.randint(0, 30)
+                
+                logger.info(f"[SQL] Loaded config: MainDurationMin={self.duration_min}, MainIterations={self.num_iterations}, SecondDurationMin={self.second_duration_min}, SecondIterations={self.second_num_iterations}, WaitTimeSeconds={self.wait_time}")
                 
         except Exception as e:
             logger.error(f"[SQL ERROR] Cannot query config: {str(e)}")
@@ -265,17 +263,22 @@ class LoadTestFramework:
         logger.info("[SQL] Loading VBA functions from database...")
         
         try:
-            # Create connection string
             conn_str = f"DRIVER={{SQL Server}};SERVER={self.config.database.server};DATABASE={self.config.database.database};UID={self.config.database.username};PWD={self.config.database.password}"
             
             with pyodbc.connect(conn_str) as conn:
                 cursor = conn.cursor()
                 
-                # Build query with parameterized approach
-                query = "SELECT Phase, ModuleName, FunctionName, Parameter FROM TestCase WHERE UserRole = ? OR UserRole = SUBSTRING(?, 1, 1) ORDER BY Phase, Sequence"
-                cursor.execute(query, (self.user_role, self.user_role))
+                query = """
+                    SELECT Phase, ModuleName, FunctionName, Parameter, 
+                           COALESCE(IntervalSeconds, ?) AS IntervalSeconds,
+                           COALESCE(Throughput, 1) AS Throughput,
+                           COALESCE(TimeoutSeconds, ?) AS TimeoutSeconds
+                    FROM TestCase 
+                    WHERE UserRole = ? OR UserRole = SUBSTRING(?, 1, 1) 
+                    ORDER BY Phase, Sequence
+                """
+                cursor.execute(query, (self.default_inner_interval, self.default_timeout_seconds, self.user_role, self.user_role))
                 
-                # Initialize arrays
                 pso_list = []
                 psc_list = []
                 start_list = []
@@ -288,8 +291,15 @@ class LoadTestFramework:
                     module_name = row[1]
                     function_name = row[2]
                     parameter = row[3]
+                    interval_seconds = float(row[4])
+                    throughput = int(row[5])
+                    timeout_seconds = float(row[6])
                     
-                    func_info = FunctionInfo(module_name, function_name, parameter)
+                    if timeout_seconds <= 0:
+                        logger.warning(f"Invalid timeout {timeout_seconds} for {module_name}.{function_name}. Using default {self.default_timeout_seconds}.")
+                        timeout_seconds = self.default_timeout_seconds
+                    
+                    func_info = FunctionInfo(module_name, function_name, parameter, interval_seconds, throughput, timeout_seconds)
                     
                     if phase == "PSO":
                         pso_list.append(func_info)
@@ -304,7 +314,6 @@ class LoadTestFramework:
                     elif phase == "SECOND_END":
                         second_end_list.append(func_info)
                 
-                # Assign to instance variables
                 self.pso_functions = pso_list
                 self.psc_functions = psc_list
                 self.start_functions = start_list
@@ -323,12 +332,10 @@ class LoadTestFramework:
         logger.info("[OPEN] Connecting to Excel...")
         
         try:
-            # Try to get existing Excel application
             pythoncom.CoInitialize()
             self.xl_app = win32com.client.Dispatch("Excel.Application")
             self.xl_app.Visible = True
             
-            # Open the workbook
             self.wb = self.xl_app.Workbooks.Open(self.xlsm_file)
             self.wb.Activate()
             
@@ -339,15 +346,13 @@ class LoadTestFramework:
             sys.exit(1)
     
     def run_vba_functions(self, phase: str) -> List[Tuple[datetime.datetime, float, str]]:
-        """Run VBA functions for the specified phase"""
+        """Run VBA functions for the specified phase with timeout"""
         results = []
         
-        # Ensure Excel is ready
         if not self.wb:
             logger.info(f"    [{phase}] [ERROR] Workbook lost! Reopening...")
             self.initialize_excel()
         
-        # Select function array based on phase
         functions = {
             "PSO": self.pso_functions,
             "PSC": self.psc_functions,
@@ -360,26 +365,38 @@ class LoadTestFramework:
             return results
         
         for func_info in functions:
-            logger.info(f"    {self.get_log_data_dt(datetime.datetime.now())} [{phase}] {func_info.module_name}.{func_info.function_name}( \"{func_info.parameter}\" )")
+            unique_key = f"{phase}.{func_info.function_name}"
+            logger.info(f"    [KEY] Executing with key: {unique_key}")
             
-            try:
-                # Run the VBA function
-                result = self.wb.Application.Run(f"{func_info.module_name}.{func_info.function_name}", func_info.parameter)
-                results.append((datetime.datetime.now(), float(result), func_info.parameter))
-                logger.info(f"    [SUCCESS] {int(result)}")
-            except Exception as e:
-                results.append((datetime.datetime.now(), -1.0, f"{func_info.parameter} ERROR: {str(e)}"))
-                logger.error(f"    [ERROR] {str(e)}")
+            for _ in range(func_info.throughput):
+                logger.info(f"    Thinking for {self.thinking_time} seconds")
+                time.sleep(self.thinking_time)
+                logger.info(f"    {self.get_log_data_dt(datetime.datetime.now())} [{phase}] {func_info.module_name}.{func_info.function_name}( \"{func_info.parameter}\" )")
+                
+                try:
+                    result = func_timeout(
+                        func_info.timeout_seconds,
+                        self.wb.Application.Run,
+                        args=(f"{func_info.module_name}.{func_info.function_name}", func_info.parameter)
+                    )
+                    results.append((datetime.datetime.now(), float(result), func_info.parameter))
+                    logger.info(f"    [SUCCESS] {int(result)}")
+                except FunctionTimedOut:
+                    logger.error(f"    [TIMEOUT] {func_info.module_name}.{func_info.function_name} timed out after {func_info.timeout_seconds} seconds")
+                except Exception as e:
+                    logger.error(f"    [ERROR] {func_info.module_name}.{func_info.function_name}: {str(e)}")
+                    continue
         
         return results
     
     def log_results(self, results: List[Tuple[datetime.datetime, float, str]], phase: str):
-        """Log results to file"""
+        """Log results to file, excluding errors"""
         log_entries = []
         
         for timestamp, value, parameter in results:
-            log_line = f"{self.get_log_data_dt(timestamp)},{int(value)},{parameter}"
-            log_entries.append(log_line)
+            if value >= 0:
+                log_line = f"{self.get_log_data_dt(timestamp)},{int(value)},{parameter}"
+                log_entries.append(log_line)
         
         if log_entries:
             with open(self.log_file, 'a', encoding='utf-8') as f:
@@ -389,13 +406,11 @@ class LoadTestFramework:
     def update_job_status(self, job_status: str, job_details: str):
         """Update job status in database"""
         try:
-            # Create connection string
             conn_str = f"DRIVER={{SQL Server}};SERVER={self.config.database.server};DATABASE={self.config.database.database};UID={self.config.database.username};PWD={self.config.database.password}"
             
             with pyodbc.connect(conn_str) as conn:
                 cursor = conn.cursor()
                 
-                # Check control table
                 control_query = "SELECT TOP 1 TestId FROM Testcontrol WHERE testid = ? AND (GETDATE() > EndTime OR Status IN ('Aborted', 'Completed'))"
                 cursor.execute(control_query, (self.test_id,))
                 
@@ -403,7 +418,6 @@ class LoadTestFramework:
                     self.should_stop = True
                     logger.info("[CONTROL] Test End Signaled.")
                 
-                # Call stored procedure
                 cursor.execute("{CALL UpdateJobStatusWithHistory (?, ?, ?)}", 
                              (self.ip_address, job_status, job_details))
                 
@@ -413,21 +427,12 @@ class LoadTestFramework:
             logger.error(f"[SQL ERROR] Stored proc failed: {str(e)}")
             error_results = [(datetime.datetime.now(), -1.0, f"SQL ERROR: {str(e)}")]
             self.log_results(error_results, "SQL")
-    
-    def get_log_file_dt(self) -> str:
-        """Get formatted date for log file name using built-in datetime formatting"""
-        dt = datetime.datetime.now()
-        # Format: yyyymmdd-hh (e.g., 20251023-14)
-        return dt.strftime("%Y%m%d-%H")
-    
+
     def get_log_data_dt(self, timestamp: datetime.datetime) -> str:
-        """Get formatted timestamp for log data in 'yyyy/mm/dd hh:mi:ss' format using built-in datetime formatting"""
+        """Get formatted timestamp for log data in 'yyyy/mm/dd hh:mi:ss' format"""
         if not timestamp:
             return "Invalid Date"
-        
-        # Use Python's built-in datetime formatting
-        # Format: yyyy/mm/dd hh:mi:ss (24-hour format)
-        return timestamp.strftime("%Y/%m/%d %H:%M:%S")
+        return timestamp.strftime("%Y/%m/%d %H:%M:%S.%f")[:-3]
     
     def execute_main_loop(self):
         """Execute the main testing loop"""
@@ -440,14 +445,11 @@ class LoadTestFramework:
             logger.info(f"{self.get_log_data_dt(datetime.datetime.now())} [VT PERIOD] {self.iteration_count} START")
             self.update_job_status("Running", f"[VT PERIOD] {self.iteration_count} START")
             
-            # Run START functions
             start_results = self.run_vba_functions("START")
             self.log_results(start_results, "START")
             
-            # Execute inner loop
             self.execute_inner_loop(last_sql_update)
             
-            # Run END functions
             end_results = self.run_vba_functions("END")
             self.log_results(end_results, "END")
             
@@ -458,42 +460,69 @@ class LoadTestFramework:
                 break
     
     def execute_inner_loop(self, last_sql_update: datetime.datetime):
-        """Execute the inner testing loop"""
+        """Execute the inner testing loop with function-specific intervals"""
         iteration_end_time = datetime.datetime.now() + datetime.timedelta(minutes=self.duration_min)
+        
+        for func in self.inner_functions:
+            key = (func.module_name, func.function_name, func.parameter)
+            self.inner_function_last_run[key] = datetime.datetime.min
         
         while datetime.datetime.now() < iteration_end_time:
             if datetime.datetime.now() >= self.end_time or self.should_stop:
                 logger.info(f"{self.get_log_data_dt(datetime.datetime.now())} [DONE] Main end time reached or stop signaled!")
                 break
             
-            # Run INNER functions
-            inner_results = self.run_vba_functions("INNER")
+            inner_results = []
+            current_time = datetime.datetime.now()
+            for func in self.inner_functions:
+                unique_key = f"INNER.{func.function_name}"
+                logger.info(f"    [KEY] Checking with key: {unique_key}")
+                
+                key = (func.module_name, func.function_name, func.parameter)
+                last_run = self.inner_function_last_run.get(key, datetime.datetime.min)
+                time_since_last_run = (current_time - last_run).total_seconds()
+                
+                if time_since_last_run >= func.interval_seconds:
+                    logger.info(f"    Thinking for {self.thinking_time} seconds before {func.module_name}.{func.function_name}")
+                    time.sleep(self.thinking_time)
+                    logger.info(f"    {self.get_log_data_dt(current_time)} [INNER] {func.module_name}.{func.function_name}( \"{func.parameter}\" )")
+                    
+                    try:
+                        result = func_timeout(
+                            func.timeout_seconds,
+                            self.wb.Application.Run,
+                            args=(f"{func.module_name}.{func.function_name}", func.parameter)
+                        )
+                        inner_results.append((current_time, float(result), func.parameter))
+                        logger.info(f"    [SUCCESS] {int(result)}")
+                        self.inner_function_last_run[key] = current_time
+                    except FunctionTimedOut:
+                        logger.error(f"    [TIMEOUT] {func.module_name}.{func.function_name} timed out after {func.timeout_seconds} seconds")
+                    except Exception as e:
+                        logger.error(f"    [ERROR] {func.module_name}.{func.function_name}: {str(e)}")
+            
             self.log_results(inner_results, "INNER")
             
-            # Check for second loop execution
             if self.second_iteration_count < self.second_num_iterations and datetime.datetime.now() >= self.second_next_run:
                 self.second_iteration_count += 1
                 logger.info(f"{self.get_log_data_dt(datetime.datetime.now())} [CS PERIOD] {self.second_iteration_count} CUT-OFF")
                 
-                # Run SECOND_END functions
                 second_end_results = self.run_vba_functions("SECOND_END")
                 self.log_results(second_end_results, "SECOND_END")
                 
                 logger.info(f"{self.get_log_data_dt(datetime.datetime.now())} [CS PERIOD] {self.second_iteration_count} END")
                 self.second_next_run = self.second_next_run + datetime.timedelta(minutes=self.second_duration_min)
             
-            # SQL update every minute
             if (datetime.datetime.now() - last_sql_update).total_seconds() >= 60:
                 self.update_job_status("Running", "Heart beat")
                 last_sql_update = datetime.datetime.now()
             
-            time.sleep(3)  # Sleep for 3 seconds
+            time.sleep(0.1)
     
     def cleanup_script(self):
         """Clean up resources"""
         logger.info("[CLEANUP] Cleaning up resources...")
         
-        # Close Excel
         if self.wb:
             try:
                 self.wb.Close(SaveChanges=False)
@@ -508,28 +537,25 @@ class LoadTestFramework:
             except:
                 logger.warning("Error quitting Excel")
         
+        pythoncom.CoUninitialize()
         logger.info("[CLEANUP] Script completed successfully")
     
     def run(self):
         """Main execution method"""
         try:
-            # Initialize script
             self.initialize_script()
-            
-            # Load configuration and functions
             self.load_configuration_from_database()
             self.load_vba_functions()
-            
-            # Initialize Excel
             self.initialize_excel()
             
-            # Start timing
+            logger.info(f"[WAIT] Waiting for {self.wait_time} seconds before starting test...")
+            time.sleep(self.wait_time)
+            
             self.start_time = datetime.datetime.now()
             self.end_time = self.start_time + datetime.timedelta(minutes=self.duration_min * self.num_iterations)
             
             logger.info(f"[START TEST] {self.start_time.strftime('%c')}")
             
-            # Pre-Test Setup Operations
             logger.info(f"[PSO] {self.start_time.strftime('%c')}")
             pso_results = self.run_vba_functions("PSO")
             self.log_results(pso_results, "PSO")
@@ -540,15 +566,12 @@ class LoadTestFramework:
             logger.info(f"[SECOND END] {(self.start_time + datetime.timedelta(minutes=self.second_duration_min * self.second_num_iterations)).strftime('%c')}")
             logger.info("")
             
-            # Initialize loop counters
             self.iteration_count = 0
             self.second_iteration_count = 0
             self.second_next_run = self.start_time + datetime.timedelta(minutes=self.second_duration_min)
             
-            # Execute main loop
             self.execute_main_loop()
             
-            # Post-Test Cleanup Operations
             logger.info(f"[PSC] {datetime.datetime.now().strftime('%c')}")
             psc_results = self.run_vba_functions("PSC")
             self.log_results(psc_results, "PSC")
