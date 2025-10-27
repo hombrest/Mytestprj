@@ -16,6 +16,7 @@ import logging
 from dataclasses import dataclass
 from contextlib import contextmanager
 from func_timeout import func_timeout, FunctionTimedOut
+from sqlalchemy import create_engine  # New import for connection pooling
 
 # Configure logging with separate console log file
 log_directory = os.path.join(os.getcwd(), 'logs')
@@ -25,8 +26,8 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler(console_log_file),  # Save console output to separate log file
-        logging.StreamHandler()  # Output to console
+        logging.FileHandler(console_log_file),
+        logging.StreamHandler()
     ]
 )
 logger = logging.getLogger(__name__)
@@ -38,7 +39,7 @@ class FunctionInfo:
     parameter: str
     interval_seconds: float
     throughput: int
-    timeout_seconds: float  # Timeout for VBA functions
+    timeout_seconds: float
 
 @dataclass
 class DatabaseConfig:
@@ -46,6 +47,7 @@ class DatabaseConfig:
     database: str
     username: str
     password: str
+    driver: str  # New field for configurable database driver
 
 @dataclass
 class LoggingConfig:
@@ -62,7 +64,7 @@ class ExecutionConfig:
     default_thinking_time: int
     default_inner_interval: float
     default_wait_time_seconds: int
-    default_timeout_seconds: float  # Default VBA timeout
+    default_timeout_seconds: float
 
 @dataclass
 class LoadTestConfig:
@@ -104,7 +106,24 @@ class LoadTestFramework:
         self.psc_functions: List[FunctionInfo] = []
         self.inner_function_last_run: Dict[Tuple[str, str, str], datetime.datetime] = {}
         self.wait_time: int = self.config.execution.default_wait_time_seconds
+        # Initialize SQLAlchemy engine for connection pooling
+        self.db_engine = self.create_db_engine()
         self.setup_logging()
+    
+    def create_db_engine(self):
+        """Create SQLAlchemy engine for connection pooling"""
+        try:
+            driver = self.config.database.driver or "SQL Server"
+            conn_str = (
+                f"mssql+pyodbc://{self.config.database.username}:{self.config.database.password}"
+                f"@{self.config.database.server}/{self.config.database.database}?driver={driver}"
+            )
+            engine = create_engine(conn_str, pool_size=5, max_overflow=10)
+            logger.info(f"[DB] Created SQLAlchemy engine with driver: {driver}")
+            return engine
+        except Exception as e:
+            logger.error(f"[DB ERROR] Failed to create database engine: {str(e)}")
+            sys.exit(1)
     
     def load_configuration(self) -> LoadTestConfig:
         """Load configuration from file with multiple fallback locations"""
@@ -138,7 +157,8 @@ class LoadTestFramework:
                 server=config_data['database']['server'],
                 database=config_data['database']['database'],
                 username=config_data['database']['username'],
-                password=config_data['database']['password']
+                password=config_data['database']['password'],
+                driver=config_data['database'].get('driver', 'SQL Server')  # Default to SQL Server
             )
             
             logging_config = LoggingConfig(
@@ -226,13 +246,11 @@ class LoadTestFramework:
         logger.info("[SQL] Loading configuration from database...")
         
         try:
-            conn_str = f"DRIVER={{SQL Server}};SERVER={self.config.database.server};DATABASE={self.config.database.database};UID={self.config.database.username};PWD={self.config.database.password}"
-            
-            with pyodbc.connect(conn_str) as conn:
-                cursor = conn.cursor()
-                
-                query = "SELECT TOP 1 VTDurationMin, NumOfVTPeriod, CSDurationMin, NumOfCSPeriod, WaitTimeSeconds FROM TestControl WHERE TestId = ?"
-                cursor.execute(query, (self.test_id,))
+            with self.db_engine.connect() as conn:
+                cursor = conn.execute(
+                    "SELECT TOP 1 VTDurationMin, NumOfVTPeriod, CSDurationMin, NumOfCSPeriod, WaitTimeSeconds FROM TestControl WHERE TestId = ?",
+                    (self.test_id,)
+                )
                 
                 row = cursor.fetchone()
                 
@@ -263,12 +281,9 @@ class LoadTestFramework:
         logger.info("[SQL] Loading VBA functions from database...")
         
         try:
-            conn_str = f"DRIVER={{SQL Server}};SERVER={self.config.database.server};DATABASE={self.config.database.database};UID={self.config.database.username};PWD={self.config.database.password}"
-            
-            with pyodbc.connect(conn_str) as conn:
-                cursor = conn.cursor()
-                
-                query = """
+            with self.db_engine.connect() as conn:
+                cursor = conn.execute(
+                    """
                     SELECT Phase, ModuleName, FunctionName, Parameter, 
                            COALESCE(IntervalSeconds, ?) AS IntervalSeconds,
                            COALESCE(Throughput, 1) AS Throughput,
@@ -276,8 +291,9 @@ class LoadTestFramework:
                     FROM TestCase 
                     WHERE UserRole = ? OR UserRole = SUBSTRING(?, 1, 1) 
                     ORDER BY Phase, Sequence
-                """
-                cursor.execute(query, (self.default_inner_interval, self.default_timeout_seconds, self.user_role, self.user_role))
+                    """,
+                    (self.default_inner_interval, self.default_timeout_seconds, self.user_role, self.user_role)
+                )
                 
                 pso_list = []
                 psc_list = []
@@ -406,13 +422,11 @@ class LoadTestFramework:
     def update_job_status(self, job_status: str, job_details: str):
         """Update job status in database"""
         try:
-            conn_str = f"DRIVER={{SQL Server}};SERVER={self.config.database.server};DATABASE={self.config.database.database};UID={self.config.database.username};PWD={self.config.database.password}"
-            
-            with pyodbc.connect(conn_str) as conn:
-                cursor = conn.cursor()
-                
-                control_query = "SELECT TOP 1 TestId FROM Testcontrol WHERE testid = ? AND (GETDATE() > EndTime OR Status IN ('Aborted', 'Completed'))"
-                cursor.execute(control_query, (self.test_id,))
+            with self.db_engine.connect() as conn:
+                cursor = conn.execute(
+                    "SELECT TOP 1 TestId FROM Testcontrol WHERE testid = ? AND (GETDATE() > EndTime OR Status IN ('Aborted', 'Completed'))",
+                    (self.test_id,)
+                )
                 
                 if cursor.fetchone():
                     self.should_stop = True
@@ -538,6 +552,8 @@ class LoadTestFramework:
                 logger.warning("Error quitting Excel")
         
         pythoncom.CoUninitialize()
+        if self.db_engine:
+            self.db_engine.dispose()  # Dispose of SQLAlchemy engine
         logger.info("[CLEANUP] Script completed successfully")
     
     def run(self):
