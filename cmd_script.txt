@@ -1,0 +1,331 @@
+Excellent question — and a tricky one when using `start`, `ssh`, and multiple concurrent sessions.
+
+Let’s go step by step, because redirecting output from *multiple started consoles* to *local files* needs some care.
+
+---
+
+## 🎯 Your Goal
+
+You’re doing something like:
+
+```bat
+start "Host1" ssh admin@host1 "schtasks /run /tn myTask"
+start "Host2" ssh admin@host2 "schtasks /run /tn myTask"
+```
+
+Now you want the **output of each remote session** to be captured into **local log files** such as:
+
+```
+host1.log
+host2.log
+```
+
+---
+
+## ⚙️ The Problem
+
+By default, `start` launches a new console process that doesn’t share your parent’s redirections — each one has its own I/O streams. So if you just do:
+
+```bat
+start "Host1" ssh admin@host1 "schtasks /run /tn myTask > host1.log"
+```
+
+that redirection happens **inside the new window**, but it may fail depending on quoting or escaping, because `start` parses arguments in a quirky way.
+
+---
+
+## ✅ The Correct Way
+
+Use an explicit `cmd /c` wrapper inside `start`, so redirection works *inside* the new console.
+
+### Example:
+
+```bat
+start "Host1" cmd /c "ssh -n admin@host1 \"schtasks /run /tn myTask\" > host1.log 2>&1"
+start "Host2" cmd /c "ssh -n admin@host2 \"schtasks /run /tn myTask\" > host2.log 2>&1"
+```
+
+### What it does:
+
+* `cmd /c` runs everything in quotes and then exits.
+* `ssh -n` avoids hanging waiting for input.
+* `> hostX.log 2>&1` redirects both stdout and stderr to a file.
+* The outer `start` creates independent windows, so they can all run in parallel.
+
+When they finish, you’ll have:
+
+```
+host1.log
+host2.log
+```
+
+each containing the remote task output.
+
+---
+
+## 🧹 Optional Tweaks
+
+### 1. **No console windows (background mode)**
+
+If you don’t need visible windows:
+
+```bat
+start /b cmd /c "ssh -n admin@host1 \"schtasks /run /tn myTask\" > host1.log 2>&1"
+```
+
+That runs everything in the background from one console.
+
+---
+
+### 2. **Timestamped log files**
+
+To avoid overwriting old logs:
+
+```bat
+for %%H in (host1 host2 host3) do (
+    start "%%H" cmd /c "ssh -n admin@%%H \"schtasks /run /tn myTask\" > %%H_!date:~10,4!-!date:~4,2!-!date:~7,2!_!time:~0,2!-!time:~3,2!.log 2>&1"
+)
+```
+
+(Requires `setlocal enabledelayedexpansion` at the top for the `!date!` expansion to work.)
+
+---
+
+### 3. **Combine all output into a single log**
+
+If you prefer one file:
+
+```bat
+start /b cmd /c "ssh -n admin@host1 \"schtasks /run /tn myTask\" >> all.log 2>&1"
+start /b cmd /c "ssh -n admin@host2 \"schtasks /run /tn myTask\" >> all.log 2>&1"
+```
+
+Then each line is appended to `all.log`.
+
+---
+
+Perfect 👍 — here’s a **complete, reliable batch script** that:
+
+* launches multiple remote `schtasks` runs in parallel via SSH,
+* logs each host’s output locally with timestamps,
+* avoids hanging windows,
+* and closes cleanly afterward.
+
+---
+
+## ✅ **Parallel Remote Task Runner (save as `run_remote_tasks.bat`)**
+
+```bat
+@echo off
+setlocal enabledelayedexpansion
+
+rem ========================================
+rem CONFIGURATION
+rem ========================================
+set USER=admin
+set TASKNAME=myTask
+
+rem List of remote hosts (space-separated)
+set HOSTS=host1 host2 host3
+
+rem Log directory (created automatically)
+set LOGDIR=logs
+
+rem ========================================
+rem SETUP
+rem ========================================
+if not exist "%LOGDIR%" mkdir "%LOGDIR%"
+
+rem Get current timestamp (safe for filenames)
+for /f "tokens=1-5 delims=/: " %%a in ("%date% %time%") do (
+    set TODAY=%%a-%%b-%%c
+    set NOW=%%d-%%e
+)
+set NOW=!NOW::=-!
+
+echo Starting remote tasks at %TODAY%_%NOW%
+echo Logs will be stored in "%LOGDIR%"
+
+rem ========================================
+rem LAUNCH TASKS
+rem ========================================
+for %%H in (%HOSTS%) do (
+    echo Launching task on %%H ...
+    start "%%H" cmd /c ^
+        "ssh -n %USER%@%%H \"schtasks /run /tn %TASKNAME%\" ^
+         > \"%LOGDIR%\%%H_%TODAY%_%NOW%.log\" 2>&1"
+)
+
+echo.
+echo All remote sessions launched.
+echo Check "%LOGDIR%" for output logs.
+echo.
+
+endlocal
+```
+
+---
+
+## 🧩 **How It Works**
+
+* Each `start` command opens a new process that runs:
+
+  ```bat
+  ssh -n admin@host "schtasks /run /tn myTask"
+  ```
+
+  and saves all output (both stdout + stderr) to:
+
+  ```
+  logs/host_YYYY-MM-DD_HH-MM.log
+  ```
+
+* The `-n` flag makes SSH ignore local input, preventing those annoying “press Enter” hangs.
+
+* The `cmd /c ...` wrapper ensures proper redirection and auto-closing of the console once done.
+
+* `start` runs each connection **in parallel**, so all hosts are triggered at once.
+
+---
+
+## 🧰 **Optional Enhancements**
+
+### 1. **Run silently (no new windows)**
+
+Replace:
+
+```bat
+start "%%H" cmd /c ...
+```
+
+with:
+
+```bat
+start /b cmd /c ...
+```
+
+to run everything in the **background** of one window.
+
+---
+
+### 2. **Single combined log**
+
+If you prefer all outputs in one log:
+
+```bat
+>> "%LOGDIR%\combined_%TODAY%_%NOW%.log" 2>&1
+```
+
+instead of the per-host file.
+
+---
+
+### 3. **Wait for completion (optional)**
+
+You can add a short delay at the end if you want to ensure all tasks are launched before the script exits:
+
+```bat
+timeout /t 5 >nul
+```
+
+---
+
+@echo off
+setlocal enabledelayedexpansion
+
+rem =========================================================
+rem  CONFIGURATION
+rem =========================================================
+if "%~1"=="" (
+    echo Usage: %~nx0 host_list.txt
+    exit /b 1
+)
+
+set "HOSTFILE=%~1"
+if not exist "%HOSTFILE%" (
+    echo Error: Host file "%HOSTFILE%" not found.
+    exit /b 1
+)
+
+set "USER=admin"
+set "TASKNAME=myTask"
+set "LOGDIR=logs"
+
+rem =========================================================
+rem  SETUP
+rem =========================================================
+if not exist "%LOGDIR%" mkdir "%LOGDIR%"
+
+for /f "tokens=1-5 delims=/: " %%a in ("%date% %time%") do (
+    set TODAY=%%a-%%b-%%c
+    set NOW=%%d-%%e
+)
+set NOW=!NOW::=-!
+
+echo ==========================================
+echo  Starting remote tasks
+echo  Date: %TODAY%_%NOW%
+echo  Host list: %HOSTFILE%
+echo  Logs directory: %LOGDIR%
+echo ==========================================
+echo.
+
+rem =========================================================
+rem  LAUNCH TASKS
+rem =========================================================
+set "HOSTLIST="
+
+for /f "usebackq tokens=* delims=" %%H in ("%HOSTFILE%") do (
+    set "LINE=%%H"
+    for /f "tokens=* delims= " %%A in ("!LINE!") do set "LINE=%%A"
+    if not "!LINE!"=="" (
+        if /i not "!LINE:~0,1!"=="#" (
+            set "HOSTLIST=!HOSTLIST! !LINE!"
+            echo Launching task on !LINE! ...
+            start "!LINE!" cmd /c ^
+                "ssh -n %USER%@!LINE! \"schtasks /run /tn %TASKNAME%\" ^
+                 > \"%LOGDIR%\!LINE!_%TODAY%_%NOW%.log\" 2>&1"
+        )
+    )
+)
+
+echo.
+echo All remote sessions launched.
+echo Waiting a few seconds for logs to complete...
+timeout /t 10 >nul
+
+rem =========================================================
+rem  SUMMARY REPORT
+rem =========================================================
+echo ==========================================
+echo  SUMMARY REPORT
+echo ==========================================
+
+set SUCCESS_COUNT=0
+set FAIL_COUNT=0
+
+for %%H in (!HOSTLIST!) do (
+    set "LOGFILE=%LOGDIR%\%%H_%TODAY%_%NOW%.log"
+    if exist "!LOGFILE!" (
+        findstr /i "SUCCESS completed successfully" "!LOGFILE!" >nul 2>&1
+        if !errorlevel! == 0 (
+            echo [SUCCESS] %%H
+            set /a SUCCESS_COUNT+=1
+        ) else (
+            echo [FAIL]    %%H
+            set /a FAIL_COUNT+=1
+        )
+    ) else (
+        echo [NO LOG] %%H
+        set /a FAIL_COUNT+=1
+    )
+)
+
+echo.
+echo ==========================================
+echo  Summary: !SUCCESS_COUNT! success(es), !FAIL_COUNT! failure(s)
+echo  Logs stored in "%LOGDIR%"
+echo ==========================================
+echo.
+
+endlocal
