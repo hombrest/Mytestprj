@@ -1,0 +1,25 @@
+gantt
+    dateFormat  YYYY-MM-DD
+    title       eForm Migration Project
+    excludes    weekends
+    %% (`excludes` accepts specific dates in YYYY-MM-DD format, days of the week ("sunday") or "weekends", but not the word "weekdays".)
+
+    section Regression Test
+    Regression Test for GC               :active,  des2, 2026-01-12, 10d
+    Regression Test for FC               :active,  des2, 2026-01-12, 10d
+    Regression Test for ECC               :active,  des2, 2026-01-12, 10d
+    Regression Test for ECC               :active,  des2, 2026-01-12, 10d
+
+    section Load Test
+    Load Test plan preparation:active, des1, 2026-01-08,2d
+    Test implementation          :crit, active, after des1, 5d
+    Test result review             :crit, active, 3d
+
+    section Documentation
+    Describe gantt syntax               :active, a1, after des1, 3d
+    Add gantt diagram to demo page      :after a1  , 20h
+    Add another diagram to demo page    :doc1, after a1  , 48h
+
+    section Deployment
+    Deployment by ITMD              :after doc1, 3d
+    Post-deplooment verification      :1d
