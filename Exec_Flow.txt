@@ -58,3 +58,43 @@ if !count! lss %MaxRuns% goto repeat_loop
 :exitFlow
 endlocal & set "eVTCS_VTPeriod=%VTPeriod%" & set "eVTCS_CSPeriod=%CSPeriod%"
 >>>
+
+You can simply tell Claude Code in plain language — it's good at setting up git from scratch. But the more reliable way is to put the instruction in your `CLAUDE.md` so it applies automatically.
+
+**Option 1: Just ask it directly in the session**
+
+> "This project isn't in git yet. Initialize a repository, make an initial commit of the current codebase, and commit your changes before and after any significant edits."
+
+Claude Code will run `git init`, stage everything, write a commit message, and from then on commit as it works.
+
+**Option 2: Add a standing instruction to `CLAUDE.md`**
+
+This is the better approach — it persists across all sessions without you having to repeat yourself. Add something like this to your project-level `.claude/CLAUDE.md` (or create it):
+
+```markdown
+## Version Control
+- This project uses git. If no repository exists yet, initialize one before making any changes.
+- Commit the current state before starting any task.
+- Make atomic commits after each logical change with a descriptive message.
+- Never leave the working tree dirty at the end of a session.
+```
+
+**Option 3: Global `CLAUDE.md` for all projects**
+
+If you want this behavior everywhere, put it in your global `~/.claude/CLAUDE.md` (on Windows: `%USERPROFILE%\.claude\CLAUDE.md`):
+
+```markdown
+## Git Hygiene
+- If a project directory has no git repo, initialize one and make an initial commit before doing any work.
+- Commit before and after any non-trivial change.
+```
+
+**One practical tip**
+
+It's worth also telling Claude Code your preferred commit style — e.g. conventional commits (`feat:`, `fix:`), or whether to squash small edits. Without guidance it'll make reasonable but generic commit messages. Adding a line like:
+
+```markdown
+- Use conventional commit format: feat / fix / refactor / chore
+```
+
+...keeps your history clean and consistent from the start.
